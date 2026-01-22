@@ -1,0 +1,2397 @@
+
+#!/bin/bash
+# shellcheck shell=bash
+
+BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+FILES=("$@")
+if [[ $# -eq 0 ]]; then
+  echo "No files provided. Please drag and drop media files onto the app."
+  exit 1
+fi
+
+
+# --- Preflight: ensure Apple Command Line Tools (for /usr/bin/swift) ---
+need_swift_dialogs=1
+if [[ "$need_swift_dialogs" == 1 ]]; then
+  have_clt() {
+    # xcode-select returns a path when tools are present
+    xcode-select -p &>/dev/null && return 0
+    # fallback: look for the package receipt
+    pkgutil --pkg-info com.apple.pkg.CLTools_Executables &>/dev/null
+  }
+
+  clt_silent_install() {
+    echo "[PRE-FLIGHT] Attempting command-line install of Xcode Command Line Tools…"
+    # Make CLT visible to softwareupdate
+    sudo touch /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+    # Grab the first matching label
+    local PROD
+    PROD=$(softwareupdate -l 2>/dev/null \
+           | grep -E "\*.*Command Line.*Tools" \
+           | head -n 1 | awk -F"*" '{print $2}' \
+           | sed -e 's/^ *//' | tr -d '\n')
+    if [[ -n "$PROD" ]]; then
+      sudo softwareupdate -i "$PROD" --verbose || return 1
+      sudo xcode-select --switch /Library/Developer/CommandLineTools || return 1
+      echo "[PRE-FLIGHT] CLT installed. Please relaunch this app once install finishes."
+    else
+      echo "[PRE-FLIGHT] Could not find a CLT package label in Software Update." >&2
+      return 1
+    fi
+    sudo rm -f /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+  }
+
+  # If CLT missing, try to install or prompt user
+  if ! have_clt; then
+    echo "[PRE-FLIGHT] Apple Command Line Tools not found."
+    if command -v swift >/dev/null 2>&1; then
+      echo "[PRE-FLIGHT] 'swift' exists, proceeding anyway."
+    else
+      if [[ $EUID -ne 0 ]]; then
+        echo "[PRE-FLIGHT] Launching Apple's installer dialog…"
+        /usr/bin/xcode-select --install || true
+        echo "[PRE-FLIGHT] Please complete the installation, then re‑run this app."
+        exit 1
+      else
+        if command -v softwareupdate >/dev/null 2>&1; then
+          clt_silent_install || {
+            echo "[PRE-FLIGHT] Silent install failed. Please run without sudo to get the GUI installer." >&2
+            exit 1
+          }
+          exit 1
+        else
+          echo "[PRE-FLIGHT] 'softwareupdate' not available. Please run without sudo to trigger the GUI installer." >&2
+          /usr/bin/xcode-select --install || true
+          exit 1
+        fi
+      fi
+    fi
+  else
+    clt_path=$(xcode-select -p 2>/dev/null || echo "unknown")
+    echo "[PRE-FLIGHT] CLT OK (${clt_path})"
+    swift_path=$(command -v swift 2>/dev/null || echo "swift not found")
+    echo "[PRE-FLIGHT] swift: ${swift_path}"
+  fi
+fi
+
+# ----------- GROUP→CHECKS MAPPING --------------
+get_checks_for_group() {
+  local testtype="$1"
+  local group="$2"
+  case "${testtype}:${group}" in
+    "SVOD:PHASE1")
+      echo "check_file_type check_video_bitrate check_video_codec check_resolution check_aspect_ratio check_frame_rate check_chroma check_scan_type check_audio_codec check_audio_bitrate check_audio_sr check_audio_bd"
+      ;;
+    "SVOD:PHASE2")
+      echo "check_dark_frame check_stereo_only check_dynamic_stereo check_loudness check_timecode"
+      ;;
+    "SVOD:IFRAME")
+      echo "check_iframe"
+      ;;
+    "SVOD:LUMAIRE")
+      echo "check_lumaire"
+      ;;
+    "SVOD:TRUEPEAKS")
+      echo "check_truepeaks"
+      ;;
+    "SVOD:ADVANCEDLUMAIRE")
+      echo "check_adv_lumaire"
+      ;;
+    "SVOD:ADVANCEDCHROMA")
+      echo "check_adv_chroma"
+      ;;
+    "SVOD:ADVANCEDCONTINUITY")
+      echo "check_continuity"
+      ;;
+    "Broadcast Master:PHASE1")
+      echo "check_file_type check_video_bitrate check_video_codec check_resolution check_aspect_ratio check_frame_rate check_chroma check_scan_type check_audio_codec check_audio_bitrate check_audio_sr check_audio_bd check_timecode_format"
+      ;;
+    "Broadcast Master:PHASE2")
+      echo "check_stereo_only check_loudness check_timecode check_video_segment_times check_total_run_time check_has_608_cc check_has_708_cc"
+      ;;
+    "Broadcast Master:IFRAME")
+      echo "check_iframe"
+      ;;
+    "Broadcast Master:CAPTIONPROFANITY")
+      echo "check_caption_profanity"
+      ;;
+    "Broadcast Master:LUMAIRE")
+      echo "check_lumaire"
+      ;;
+    "Broadcast Master:TRUEPEAKS")
+      echo "check_truepeaks"
+      ;;
+    "Broadcast Master:ADVANCEDLUMAIRE")
+      echo "check_adv_lumaire"
+      ;;
+    "Broadcast Master:ADVANCEDCHROMA")
+      echo "check_adv_chroma"
+      ;;
+    "Broadcast Master:ADVANCEDCONTINUITY")
+      echo "check_continuity"
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
+
+
+
+
+# --------- STEP 1: Test Type Selection ---------
+echo "Please Select Test Type From Pop-Up Menu"
+TMP_TYPE=$(mktemp /tmp/te_dialog_type.XXXXXX)
+cat > "$TMP_TYPE" <<'ENDSWIFT'
+import Cocoa
+import ObjectiveC.runtime
+import Foundation
+
+let windowHeight: CGFloat = 160
+let windowWidth: CGFloat = 370
+
+
+let app = NSApplication.shared
+app.setActivationPolicy(.regular)
+
+let win = NSWindow(contentRect: NSRect(x:0, y:0, width:windowWidth, height:windowHeight),
+                   styleMask: [.titled, .closable],
+                   backing: .buffered, defer: false)
+win.center()
+win.title = "TE Test Selection"
+
+let label = NSTextField(labelWithString: "Test Type:")
+label.frame = NSRect(x:40, y:windowHeight-60, width:80, height:24)
+win.contentView?.addSubview(label)
+
+
+let popup = NSPopUpButton(frame: NSRect(x:130, y:windowHeight-64, width:200, height:28))
+popup.addItems(withTitles: ["SVOD", "Broadcast Master"])
+win.contentView?.addSubview(popup)
+
+let btn = NSButton(frame: NSRect(x:windowWidth/2-40, y:24, width:80, height:32))
+btn.title = "OK"
+btn.bezelStyle = .rounded
+btn.action = #selector(NSApplication.stop(_:))
+btn.target = app
+win.contentView?.addSubview(btn)
+
+win.makeKeyAndOrderFront(nil)
+app.activate(ignoringOtherApps: true)
+app.run()
+let result = popup.selectedItem?.title
+print(result ?? "")
+
+ENDSWIFT
+
+TEST_TYPE=$(/usr/bin/swift "$TMP_TYPE" | tail -1)
+rm "$TMP_TYPE"
+
+if [[ -z "$TEST_TYPE" ]]; then
+  echo "User cancelled or error in test type dialog." >&2
+  exit 1
+fi
+
+# --------- STEP 2: Dynamic Checks Dialog ---------
+TMP_CHECKS=$(mktemp /tmp/te_dialog_checks.XXXXXX)
+cat > "$TMP_CHECKS" <<'ENDSWIFT'
+
+
+import Cocoa
+import ObjectiveC.runtime
+import Foundation
+
+let windowHeight: CGFloat = 640
+let content = NSView(frame: NSRect(x:0, y:0, width:370, height:windowHeight))
+
+let app = NSApplication.shared
+app.setActivationPolicy(.regular)
+
+let win = NSWindow(contentRect: NSRect(x:0, y:0, width:370, height:windowHeight),
+                   styleMask: [.titled, .closable],
+                   backing: .buffered, defer: false)
+win.center()
+win.title = "TE Test Selection"
+win.contentView = content
+
+let advY: CGFloat = 180
+
+let testTypes = ["SVOD", "Broadcast Master"]
+
+// Test type popup
+let testLabel = NSTextField(labelWithString: "Test Type:")
+testLabel.frame = NSRect(x:22, y:windowHeight-55, width:80, height:20)
+content.addSubview(testLabel)
+
+let testPopup = NSPopUpButton(frame: NSRect(x:105, y:windowHeight-59, width:180, height:24))
+testPopup.addItems(withTitles: testTypes)
+content.addSubview(testPopup)
+
+let advChecks = ["Advanced Continuity", "Advanced Luma IRE", "Advanced Chroma"]
+var advStates = [false, false, false] // unchecked by default
+
+// --- Dynamic group checkboxes ---
+var checkboxes: [NSButton] = []
+var groupNames: [String] = []
+
+func updateGroupCheckboxes() {
+    // Remove old checkboxes
+    for btn in checkboxes { btn.removeFromSuperview() }
+    checkboxes.removeAll()
+
+    // Set groupNames based on selection
+    if testPopup.titleOfSelectedItem == "Broadcast Master" {
+        groupNames = ["Phase 1", "I Frame", "Caption Profanity", "Phase 2", "Luma IRE", "True Peaks"]
+    } else {
+        groupNames = ["Phase 1", "I Frame", "Phase 2", "Luma IRE", "True Peaks"]
+    }
+
+    // Add new checkboxes
+    for (i, name) in groupNames.enumerated() {
+        let btn = NSButton(checkboxWithTitle: name, target: nil, action: nil)
+        btn.frame = NSRect(x:25, y:windowHeight-100-CGFloat(i)*40, width:260, height:22)
+        btn.state = .on
+        content.addSubview(btn)
+        checkboxes.append(btn)
+    }
+}
+
+// Preselect from Step‑1 selection via env var, then populate
+if let pre = ProcessInfo.processInfo.environment["TEST_TYPE"],
+   let idx = testTypes.firstIndex(of: pre) {
+    testPopup.selectItem(at: idx)
+}
+updateGroupCheckboxes()
+
+// Update checkboxes when popup changes
+class PopupChangeSleeve {
+    let closure: ()->()
+    init(_ closure: @escaping ()->()) { self.closure = closure }
+    @objc func invoke() { closure() }
+}
+let popupSleeve = PopupChangeSleeve {
+    updateGroupCheckboxes()
+}
+testPopup.target = popupSleeve
+testPopup.action = #selector(PopupChangeSleeve.invoke)
+objc_setAssociatedObject(testPopup, "popupSleeve", popupSleeve, objc_AssociationPolicy.OBJC_ASSOCIATION_RETAIN)
+
+// Disclosure button (no label)
+let advDisclosure = NSButton(frame: NSRect(x:15, y:advY, width:22, height:22))
+advDisclosure.setButtonType(.onOff)
+advDisclosure.bezelStyle = .disclosure
+advDisclosure.title = "" // No text on the button itself
+advDisclosure.state = .off
+content.addSubview(advDisclosure)
+
+// Label next to the button
+let advLabel = NSTextField(labelWithString: "Advanced")
+advLabel.frame = NSRect(x:40, y:advY+2, width:120, height:20) // +2 for vertical alignment
+advLabel.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+content.addSubview(advLabel)
+
+// Advanced checkboxes (hidden by default, 34px apart)
+var advCheckboxes: [NSButton] = []
+for (i, name) in advChecks.enumerated() {
+    let btn = NSButton(checkboxWithTitle: name, target: nil, action: nil)
+    btn.frame = NSRect(x:40, y:advY-34-CGFloat(i)*34, width:230, height:22)
+    btn.state = .off
+    btn.isHidden = true
+    content.addSubview(btn)
+    advCheckboxes.append(btn)
+}
+
+// Disclosure toggles advanced checkboxes
+class ClosureSleeve {
+    let closure: ()->()
+    init(_ closure: @escaping ()->()) { self.closure = closure }
+    @objc func invoke() { closure() }
+}
+let sleeve = ClosureSleeve {
+    let show = advDisclosure.state == .on
+    for btn in advCheckboxes {
+        btn.isHidden = !show
+    }
+}
+advDisclosure.target = sleeve
+advDisclosure.action = #selector(ClosureSleeve.invoke)
+objc_setAssociatedObject(advDisclosure, "sleeve", sleeve, objc_AssociationPolicy.OBJC_ASSOCIATION_RETAIN)
+
+// OK button
+let okBtn = NSButton(title: "OK", target: app, action: #selector(NSApplication.stop(_:)))
+okBtn.frame = NSRect(x:110, y:22, width:120, height:32)
+okBtn.bezelStyle = .rounded
+content.addSubview(okBtn)
+
+win.makeKeyAndOrderFront(nil)
+app.activate(ignoringOtherApps: true)
+app.run()
+
+// Output Bash vars
+print("TEST_TYPE='\(testPopup.titleOfSelectedItem ?? testTypes[0])'")
+for (i, name) in groupNames.enumerated() {
+    let key = name.replacingOccurrences(of: " ", with: "").uppercased()
+    print("\(key)_ON=\(checkboxes[i].state == .on ? 1 : 0)")
+}
+for (i, name) in advChecks.enumerated() {
+    let key = name.replacingOccurrences(of: " ", with: "").uppercased()
+      let isOn = advCheckboxes[i].state == .on
+    print("\(key)_ON=\(isOn ? 1 : 0)")
+}
+
+
+
+
+
+
+ENDSWIFT
+
+OUT=$(TEST_TYPE="$TEST_TYPE" /usr/bin/swift "$TMP_CHECKS")
+rm "$TMP_CHECKS"
+
+if [[ -z "$OUT" ]]; then
+  echo "User cancelled or error in checks dialog." >&2
+  exit 1
+fi
+
+# Assign variables
+eval "$OUT"
+
+
+
+
+
+
+###
+### Assign Test Parameters 
+###
+
+case "$TEST_TYPE" in
+  "SVOD")
+    REQUIRED_CODEC="ProRes 422 HQ"
+    MIN_BITRATE=145000000
+    ALLOWED_FRAMERATE="23.98"
+    REQUIRED_ASPECT="16:9"
+  ;;
+  "Broadcast Master")
+    REQUIRED_CODEC="ProRes 4444"
+    MIN_BITRATE=200000000
+    ALLOWED_FRAMERATE="29.97"
+    REQUIRED_ASPECT="16:9"
+    # ... Broadcast Master vars
+    ;;
+  *)
+    echo "Unknown test type: $TEST_TYPE"
+    exit 1
+    ;;
+esac
+
+
+
+
+
+
+# Rest of your script continues here...
+
+
+
+# ---------- start a timer ----------
+SECONDS=0             # built-in Bash variable, counts seconds automatically
+
+# Resolve base directory (Contents/Resources)
+BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ---------- ERROR LOGGING SETUP ----------
+LOG_DIR="$HOME/Desktop/TE_Logs"
+mkdir -p "$LOG_DIR"
+ERROR_LOG="$LOG_DIR/te_errors_$(date +%Y%m%d_%H%M%S).log"
+MAIN_LOG="$LOG_DIR/te_main_$(date +%Y%m%d_%H%M%S).log"
+
+# Error logging function
+log_error() {
+    local msg="$1"
+    local file="${2:-UNKNOWN}"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR in $file: $msg" | tee -a "$ERROR_LOG" >&2
+}
+
+# Info logging function
+log_info() {
+    local msg="$1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $msg" | tee -a "$MAIN_LOG"
+}
+
+# Redirect all output to main log while still showing on screen
+exec > >(tee -a "$MAIN_LOG") 2>&1
+
+# Verbosity toggle — set TE_VERBOSE=1 to see debug/timers
+TE_VERBOSE=${TE_VERBOSE:-0}
+dbg() { [[ "$TE_VERBOSE" == "1" ]] && echo "$@" >&2; }
+
+
+
+log_info "Starting TE Check for $# files"
+
+# Locate ffmpeg
+if [[ -x "$BASE_DIR/ffmpeg" ]]; then
+    FFMPEG_BIN="$BASE_DIR/ffmpeg"
+elif command -v ffmpeg &>/dev/null; then
+    FFMPEG_BIN="ffmpeg"
+else
+    log_error "ffmpeg not found in $BASE_DIR or PATH"
+    exit 1
+fi
+
+# Locate ffprobe
+if [[ -x "$BASE_DIR/ffprobe" ]]; then
+    FFPROBE_BIN="$BASE_DIR/ffprobe"
+elif command -v ffprobe &>/dev/null; then
+    FFPROBE_BIN="ffprobe"
+else
+    log_error "ffprobe not found in $BASE_DIR or PATH"
+    exit 1
+fi
+
+# Locate Python
+if [[ -x "$BASE_DIR/pyenv/bin/python3" ]]; then
+    PYTHON_BIN="$BASE_DIR/pyenv/bin/python3"
+elif command -v python3 &>/dev/null; then
+    PYTHON_BIN="python3"
+else
+    PYTHON_BIN=""
+    log_error "Python3 not found - some color analysis may fail"
+fi
+
+
+#Locate EXIF TOOL
+# Try bundled first, then system paths
+if [[ -x "$BASE_DIR/exiftool" ]]; then
+  EXIFTOOL_BIN="$BASE_DIR/exiftool"
+elif command -v exiftool &>/dev/null; then
+  EXIFTOOL_BIN=$(command -v exiftool)
+elif [[ -x "/usr/local/bin/exiftool" ]]; then
+  EXIFTOOL_BIN="/usr/local/bin/exiftool"
+elif [[ -x "/opt/homebrew/bin/exiftool" ]]; then
+  EXIFTOOL_BIN="/opt/homebrew/bin/exiftool"
+else
+  echo "ExifTool not found. Please install ExifTool via Homebrew or include it in the app bundle."
+  exit 1
+fi
+
+
+
+
+# -------- step timing helpers (Bash 3.2 safe) --------
+step_key() { echo "${1//[^A-Za-z0-9_]/_}"; }  # scrub label → var-safe key
+
+step_start() {
+  local key; key=$(step_key "$1")
+  eval "_STEP_${key}=$(date +%s)"
+}
+
+step_end() {
+  local key start now elapsed
+  key=$(step_key "$1")
+  eval "start=\${_STEP_${key}:-}"
+  if [[ -z $start ]]; then
+    echo "step_end: unknown step '$1'" >&2
+    return 1
+  fi
+  now=$(date +%s)
+  elapsed=$(( now - start ))
+  if [[ "$TE_VERBOSE" == "1" ]]; then
+  printf '%-25s %02d:%02d:%02d\n' "$1 finished in" \
+         $((elapsed/3600)) $(((elapsed%3600)/60)) $((elapsed%60))
+fi
+}
+
+# ─────────────────────────────────────────────────────────────
+# 1) make sure at least one file was supplied
+# ─────────────────────────────────────────────────────────────
+if [[ "$#" -eq 0 ]]; then
+    log_error "No files provided as arguments"
+    echo "Please drag one or more .mov or .mp4 files onto this app."
+    exit 1
+fi
+
+# ─────────────────────────────────────────────────────────────
+# 2) helper(s) that do NOT change per-file
+# ─────────────────────────────────────────────────────────────
+###############################################################################
+# check_continuity: Video decode error and timestamp continuity check
+# (Top-level definition so it exists before any calls)
+###############################################################################
+check_continuity() {
+  local f="$FILE"
+  local base_name
+  base_name="$(basename "${f%.*}")"
+
+  # Logs go to the global LOG_DIR with per-file prefixes
+  local decode_log="$LOG_DIR/${base_name}_decode_errors.log"
+  local cont_csv="$LOG_DIR/${base_name}_continuity.csv"
+  : >"$decode_log"
+  : >"$cont_csv"
+
+  # 1) Decode error scan (catches corrupt frames/packets)
+  #    Keep stderr at error level only and record to decode_log
+  "$FFMPEG_BIN" -v error -xerror -nostdin -i "$f" -f null - 2>>"$decode_log"
+
+  # 2) Determine FPS and expected step size
+  local fps step
+  fps=$("$FFPROBE_BIN" -v error -select_streams v:0 \
+        -show_entries stream=r_frame_rate -of csv=p=0 "$f" | \
+        awk -F/ '{if($2==0||$2==""||$1=="") print 0; else printf "%.6f", $1/$2}')
+  if [[ -z "$fps" || "$fps" == "0.000000" || "$fps" == 0 ]]; then
+    CONTINUITY_RESULT="❌ FAIL"
+    CONTINUITY_MSG="Continuity: Unable to determine FPS"
+    return
+  fi
+  step=$(awk -v x="$fps" 'BEGIN{printf "%.9f", 1.0/x}')
+
+  # 3) Frame timestamp scan for gaps (>1.5*step) and regressions (<-0.5ms)
+  # Write CSV header
+  echo "type,video_time(HH:MM:SS.mmm),delta_s,expected_step_s,fps" >>"$cont_csv"
+
+  # Collect best_effort_timestamp_time list
+  local tmp_pts; tmp_pts=$(mktemp)
+  "$FFPROBE_BIN" -v error -select_streams v:0 -show_frames \
+    -show_entries frame=best_effort_timestamp_time -of csv=p=0 "$f" \
+    | awk -F, '$1 ~ /^frame/ && $2 != "N/A" {print $2}' >"$tmp_pts"
+
+  local gaps=0 regs=0 first_ts="" first_type=""
+  awk -v step="$step" '
+    function fmt(s){ h=int(s/3600); s-=h*3600; m=int(s/60); s-=m*60; ms=int((s-int(s))*1000+0.5); printf("%02d:%02d:%02d.%03d",h,m,int(s),ms) }
+    NR==1 {prev=$0; next}
+    { d=$0-prev; if (d < -0.0005) { regs++; if (first=="") {first=$0; ft="REGRESSION"} } else if (d > 1.5*step) { gaps++; if (first=="") {first=$0; ft="GAP"} } prev=$0 }
+    END { if (first!="") printf("%d %d %.6f %s\n", gaps, regs, first, ft); else printf("%d %d 0 CLEAN\n", gaps, regs) }
+  ' "$tmp_pts" >"$tmp_pts.out"
+
+  local gaps_count regs_count first_val first_lbl
+  read -r gaps_count regs_count first_val first_lbl <"$tmp_pts.out"
+  rm -f "$tmp_pts" "$tmp_pts.out"
+
+  # Pretty time
+  local first_hms=""
+  if [[ -n "$first_val" && "$first_val" != "0" ]]; then
+    first_hms=$(awk -v s="$first_val" 'BEGIN{h=int(s/3600); s-=h*3600; m=int(s/60); s-=m*60; ms=int((s-int(s))*1000+0.5); printf("%02d:%02d:%02d.%03d",h,m,int(s),ms)}')
+  fi
+
+  # Count decode errors (lines in decode_log)
+  local dec_errs=0
+  [[ -s "$decode_log" ]] && dec_errs=$(wc -l <"$decode_log" | tr -d ' ')
+
+  # Verdict → message
+  local verdict
+  if (( dec_errs > 0 || regs_count > 0 )); then
+    verdict="❌ FAIL"
+  elif (( gaps_count > 0 )); then
+    verdict="⚠️ WARNING"
+  else
+    verdict="✅ PASS"
+  fi
+
+  if [[ -n "$first_hms" ]]; then
+    CONTINUITY_MSG="${verdict} (decode errors: ${dec_errs}; gaps: ${gaps_count}; regressions: ${regs_count}) – first issue at ${first_hms}"
+  else
+    CONTINUITY_MSG="${verdict} (decode errors: ${dec_errs}; gaps: ${gaps_count}; regressions: ${regs_count})"
+  fi
+}
+check_iframe() {
+  local f="$1"
+
+  # fast packet-flag scan
+  local total keypkts
+  total=$("$FFPROBE_BIN" -v error -select_streams v:0 \
+          -show_entries packet=flags -of csv=p=0 "$f" | wc -l)
+  keypkts=$("$FFPROBE_BIN" -v error -select_streams v:0 \
+            -show_entries packet=flags -of csv=p=0 "$f" | grep -c K)
+
+  if [[ $total -eq $keypkts && $total -ne 0 ]]; then
+    # slice-header verify on first 5 000 frames
+    if "$FFPROBE_BIN" -v error -select_streams v:0 -read_intervals "%+#5000" \
+         -show_frames -show_entries frame=pict_type -of csv=p=0 "$f" |
+         grep -m1 -E 'P|B' >/dev/null ; then
+      FRAME_TYPE_RESULT="❌ FAIL"
+      FRAME_TYPE_MSG="Frame Type : Non-I packets detected"
+    else
+      FRAME_TYPE_RESULT="✅ PASS"
+      FRAME_TYPE_MSG="Frame Type : I-Frame Only packets"
+    fi
+  else
+    FRAME_TYPE_RESULT="❌ FAIL"
+    FRAME_TYPE_MSG="Frame Type : Non-I packets detected"
+  fi
+}
+
+
+
+
+#########
+## Checks as Functions 
+
+###########
+
+
+  # --------------------
+  # BASIC INFO
+  # --------------------
+  check_file_type() {
+    FILE_TYPE="${FILE##*.}"
+  if [[ "$FILE_TYPE" == "mov" ]]; then
+      FILE_TYPE_RESULT="✅ PASS"
+  else
+      FILE_TYPE_RESULT="❌ FAIL (expected .mov)"
+  fi
+  }
+
+  # --------------------
+  # VIDEO INFO
+  # --------------------
+ check_video_codec() {
+
+      
+ 
+  # Codec
+  CODEC_TAG=$("$FFPROBE_BIN" -v error -select_streams v:0 \
+      -show_entries stream=codec_tag_string \
+      -of default=noprint_wrappers=1:nokey=1 "$FILE")
+  if [[ "$CODEC_TAG" == "apch" ]]; then
+      VIDEO_CODEC="ProRes 422 HQ"; VIDEO_CODEC_RESULT="✅ PASS"
+  else
+      VIDEO_CODEC="Unknown/Other"; VIDEO_CODEC_RESULT="❌ FAIL (expected ProRes 422 HQ)"
+  fi
+ }
+
+ check_video_bitrate() {
+  # Bit rate
+  RAW_VBR=$(echo "$VIDEO_STREAM" | grep "^bit_rate=" | cut -d= -f2)
+  if [[ "$RAW_VBR" =~ ^[0-9]+$ ]]; then
+      VBR_MBPS=$(awk "BEGIN{printf \"%.1f\",$RAW_VBR/1000000}")
+      if (( RAW_VBR >= 145000000 )); then
+          VIDEO_BIT_RATE="HD – ${VBR_MBPS} Mb/s"; VIDEO_BIT_RATE_RESULT="✅ PASS"
+      else
+          VIDEO_BIT_RATE="${VBR_MBPS} Mb/s"; VIDEO_BIT_RATE_RESULT="❌ FAIL (below HD)"
+      fi
+  else
+      VIDEO_BIT_RATE="N/A"; VIDEO_BIT_RATE_RESULT="❌ FAIL"
+  fi
+ }
+
+
+check_resolution() {
+  # Resolution
+  WIDTH=$(echo "$VIDEO_STREAM" | grep "^width=" | cut -d= -f2)
+  HEIGHT=$(echo "$VIDEO_STREAM" | grep "^height=" | cut -d= -f2)
+  RESOLUTION="${WIDTH}x${HEIGHT}"
+  if (( WIDTH == 1920 && HEIGHT == 1080 )); then
+      RESOLUTION_RESULT="✅ PASS"
+  else
+      RESOLUTION_RESULT="❌ FAIL (below HD)"
+  fi
+
+}
+
+
+check_aspect_ratio() {
+
+  # Aspect ratio
+  RAW_AR=$(echo "$VIDEO_STREAM" | grep "^display_aspect_ratio=" | cut -d= -f2)
+  if [[ -n "$RAW_AR" && "$RAW_AR" != "N/A" ]]; then
+      ASPECT_RATIO="$RAW_AR"
+  else
+      R=$(awk "BEGIN{printf \"%.2f\",$WIDTH/$HEIGHT}")
+      if (( $(echo "$R>1.76 && $R<1.79" | bc -l) )); then
+          ASPECT_RATIO="16:9"
+      else
+          ASPECT_RATIO="$R:1"
+      fi
+  fi
+  if [[ "$ASPECT_RATIO" == "16:9" ]]; then
+      ASPECT_RATIO_RESULT="✅ PASS"
+  else
+      ASPECT_RATIO_RESULT="❌ FAIL (expected 16:9)"
+  fi
+
+}
+
+check_frame_rate() {
+  # Frame rate
+  FR_RAW=$(echo "$VIDEO_STREAM" | grep "^r_frame_rate=" | cut -d= -f2)
+  FRAME_RATE=$(awk "BEGIN{split(\"$FR_RAW\",a,\"/\"); printf \"%.2f\", a[1]/a[2]}")
+
+  if [[ "$TEST_TYPE" == "SVOD" ]]; then
+    if [[ "$FRAME_RATE" == "23.98" ]]; then
+      FRAME_RATE_RESULT="✅ PASS"
+    elif [[ "$FRAME_RATE" == "29.97" ]]; then
+      FRAME_RATE_RESULT="⚠️ WARNING"
+    else
+      FRAME_RATE_RESULT="❌ FAIL"
+    fi
+  elif [[ "$TEST_TYPE" == "Broadcast Master" ]]; then
+    if [[ "$FRAME_RATE" == "29.97" ]]; then
+      FRAME_RATE_RESULT="✅ PASS"
+    else
+      FRAME_RATE_RESULT="❌ FAIL"
+    fi
+  else
+    FRAME_RATE_RESULT="❌ FAIL"
+  fi
+}
+
+
+
+check_chroma() {
+
+  # Chroma sampling
+  PIX_FMT=$(echo "$VIDEO_STREAM" | grep "^pix_fmt=" | cut -d= -f2)
+  if [[ "$PIX_FMT" == yuv422* ]]; then
+      CHROMA="4:2:2"; CHROMA_RESULT="✅ PASS"
+  else
+      CHROMA="$PIX_FMT"; CHROMA_RESULT="❌ FAIL"
+  fi
+
+
+}
+
+check_scan_type() {
+
+  # Scan type
+  SCAN_TYPE=$(echo "$VIDEO_STREAM" | grep "^field_order=" | cut -d= -f2)
+  if [[ "$SCAN_TYPE" =~ ^(progressive|Progressive)$ ]]; then
+      SCAN_RESULT="✅ PASS"
+  else
+      SCAN_RESULT="❌ FAIL"
+  fi
+}
+
+
+
+
+
+  # --------------------
+  # AUDIO INFO
+  # --------------------
+ 
+check_audio_codec() {
+  # Audio codec
+  AUDIO_CODEC=$(echo "$AUDIO_STREAM" | grep "^codec_name=" | cut -d= -f2)
+  if [[ "$AUDIO_CODEC" == pcm* ]]; then
+      AUDIO_CODEC_RESULT="✅ PASS"
+  else
+      AUDIO_CODEC_RESULT="❌ FAIL (expected PCM)"
+  fi
+
+}
+
+
+check_audio_bitrate() {
+
+  # Channels & expected bitrate
+  CHANNELS=$(echo "$AUDIO_STREAM" | grep "^channels=" | cut -d= -f2)
+  if [[ "$CHANNELS" == "1" ]]; then
+      AUDIO_CHANNELS="Mono"; EXPECTED_ABR=1152
+  elif [[ "$CHANNELS" == "2" ]]; then
+      AUDIO_CHANNELS="Stereo"; EXPECTED_ABR=2304
+  else
+      AUDIO_CHANNELS="${CHANNELS}-Ch"; EXPECTED_ABR=$((CHANNELS*1152))
+  fi
+
+  # Audio bit rate
+  RAW_ABR=$(echo "$AUDIO_STREAM" | grep "^bit_rate=" | cut -d= -f2)
+  if [[ "$RAW_ABR" =~ ^[0-9]+$ ]]; then
+      ABR_K=$((RAW_ABR/1000))
+      AUDIO_BIT_RATE="${ABR_K} Kb/s"
+      if (( ABR_K == EXPECTED_ABR )); then
+          AUDIO_BR_RESULT="✅ PASS"
+      else
+          AUDIO_BR_RESULT="❌ FAIL (expected ${EXPECTED_ABR} Kb/s)"
+      fi
+  else
+      AUDIO_BIT_RATE="N/A"; AUDIO_BR_RESULT="❌ FAIL"
+  fi
+
+}
+
+check_audio_sr() {
+
+  # Audio sample rate
+  SR=$(echo "$AUDIO_STREAM" | grep "^sample_rate=" | cut -d= -f2)
+  if [[ "$SR" == "48000" ]]; then
+      AUDIO_SR="48 kHz"; AUDIO_SR_RESULT="✅ PASS"
+  else
+      AUDIO_SR="$((SR/1000)) kHz"; AUDIO_SR_RESULT="❌ FAIL"
+  fi
+}
+
+
+check_audio_bd() {
+  # Audio bit depth
+  BIT_DEPTH=$(echo "$AUDIO_STREAM" | grep "^bit_depth=" | cut -d= -f2)
+  if [[ -z "$BIT_DEPTH" || "$BIT_DEPTH" == "32" ]]; then
+      FORMAT_TAGS=$("$FFPROBE_BIN" -v error -show_format -of json "$FILE")
+      TAG_BIT_DEPTH=$(echo "$FORMAT_TAGS" | grep -o '"bits_per_sample":[0-9]\+' | head -1 | cut -d: -f2)
+      if [[ -n "$TAG_BIT_DEPTH" ]]; then
+          BIT_DEPTH="$TAG_BIT_DEPTH"
+      fi
+  fi
+  if [[ -z "$BIT_DEPTH" ]]; then
+      SAMPLE_FMT=$(echo "$AUDIO_STREAM" | grep "^sample_fmt=" | cut -d= -f2)
+      case "$SAMPLE_FMT" in
+          s16*) BIT_DEPTH="16" ;;
+          s24*) BIT_DEPTH="24" ;;
+          s32*) BIT_DEPTH="32" ;;
+          flt*) BIT_DEPTH="32 (float)" ;;
+          dbl*) BIT_DEPTH="64 (float)" ;;
+          *)    BIT_DEPTH="N/A" ;;
+      esac
+  fi
+  case "$AUDIO_CODEC" in
+      pcm_s8)     BIT_DEPTH="8" ;;
+      pcm_s16*)   BIT_DEPTH="16" ;;
+      pcm_s24*)   BIT_DEPTH="24" ;;
+      pcm_s32*)   BIT_DEPTH="32" ;;
+      pcm_f32*)   BIT_DEPTH="32 (float)" ;;
+      pcm_f64*)   BIT_DEPTH="64 (float)" ;;
+  esac
+  if [[ "$BIT_DEPTH" == "24" ]]; then
+      AUDIO_BD_RESULT="✅ PASS"
+  else
+      AUDIO_BD_RESULT="❌ FAIL"
+  fi
+}
+
+
+
+ check_timecode() {
+  step_start "Phase 2 Video - TimeCode"
+  # TIMECODE
+  TIMECODE_START=$("$FFPROBE_BIN" -v error -print_format json -show_entries stream_tags=timecode "$FILE" | \
+                    grep '"timecode":' | head -n1 | sed -E 's/.*"timecode": *"([^"]+)".*/\1/')
+dbg "[DEBUG] TEST_TYPE='$TEST_TYPE', TIMECODE_START='$TIMECODE_START'"
+  if [[ "$TEST_TYPE" == "SVOD" ]]; then
+    if [[ "$TIMECODE_START" == "00:00:00:00" || "$TIMECODE_START" == "00:00:00;00" ]]; then
+      TIMECODE_RESULT="✅ PASS"
+    elif [[ -z "$TIMECODE_START" ]]; then
+      TIMECODE_RESULT="❌ 🔧 Adjust in Premiere (Not detected)"
+    else
+      TIMECODE_RESULT="❌ 🔧 Adjust in Premiere (starts at $TIMECODE_START)"
+    fi
+  elif [[ "$TEST_TYPE" == "Broadcast Master" ]]; then
+    if [[ "$TIMECODE_START" == "00:58:30;00" || "$TIMECODE_START" == "00:58:30:00" ]]; then
+      TIMECODE_RESULT="✅ PASS"
+    elif [[ -z "$TIMECODE_START" ]]; then
+      TIMECODE_RESULT="❌ 🔧 Adjust in Premiere (Not detected)"
+    else
+      TIMECODE_RESULT="❌ 🔧 Adjust in Premiere (starts at $TIMECODE_START)"
+    fi
+ 
+  fi
+
+  step_end "Phase 2 Video - TimeCode"
+}
+
+
+
+###############################################################################
+# Phase 2 – Head & Tail dark-frame check (quiet but accurate)
+###############################################################################
+
+check_dark_frame() {
+
+step_start "Phase 2 Video - Head and Tail"
+
+codec=$("$FFPROBE_BIN" -v error -select_streams v:0 \
+        -show_entries stream=codec_name \
+        -of default=noprint_wrappers=1:nokey=1 "$FILE")
+
+case "$codec" in
+  h264|hevc)          threshold=45 ;;
+  prores*|dnxhd)      threshold=74 ;;
+  *)                  threshold=40 ;;
+esac
+
+
+# ---- helper filter string ----------------------------------------------------
+STAT_FILTER="signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-"
+
+# ---- head probe --------------------------------------------------------------
+first=$("$FFMPEG_BIN" -v error -i "$FILE" \
+        -vf "$STAT_FILTER" -frames:v 1 -f null - 2>&1 |
+        awk -F= '/lavfi.signalstats.YAVG/ {print $2; exit}')
+
+# ---- tail probe (seek 50 ms before EOF) --------------------------------------
+last=$("$FFMPEG_BIN" -v error -noaccurate_seek -sseof -0.05 -i "$FILE" \
+       -vf "$STAT_FILTER" -frames:v 1 -f null - 2>&1 |
+       awk -F= '/lavfi.signalstats.YAVG/ {print $2; exit}')
+
+# ---- fallback safety defaults ------------------------------------------------
+first=${first:-100}; last=${last:-100}
+lte() { echo "$1 <= $2" | bc -l; }
+
+first_dark=$(lte "$first" "$threshold")
+last_dark=$(lte "$last" "$threshold")
+
+
+
+if   (( first_dark &&  last_dark )); then
+  DARK_FRAME_RESULT="✅ PASS"
+  DARK_FRAME_MSG="Dark Frames: ✅ Present at head & tail"
+elif (( !first_dark && last_dark )); then
+  DARK_FRAME_RESULT="❌ FAIL"
+  DARK_FRAME_MSG="Dark Frames: ❌ Missing head"
+elif (( first_dark && !last_dark )); then
+  DARK_FRAME_RESULT="❌ FAIL"
+  DARK_FRAME_MSG="Dark Frames: ❌ Missing tail"
+else
+  DARK_FRAME_RESULT="❌ FAIL"
+  DARK_FRAME_MSG="Dark Frames: ❌ Missing head & tail"
+fi
+
+step_end "Phase 2 Video - Head and Tail"
+
+dbg "[TRACE] about to test LUMAIRE_ON = '$LUMAIRE_ON'"
+}
+
+
+########################################
+# --------  Phase 2 Audio  --------
+########################################
+
+
+FFPROBE_BIN=${FFPROBE_BIN:-ffprobe}
+
+check_stereo_only() {
+  step_start "Phase 2 Audio"
+
+  # Query fresh values (do not rely on Phase 1 having run)
+  local channels_val audio_stream_count
+
+  channel_layout=$( \
+    "$FFPROBE_BIN" -v error -select_streams a:0 \
+      -show_entries stream=channel_layout \
+      -of default=nw=1:nk=1 "$FILE" | head -n1 )
+
+  channels_val=$( \
+    "$FFPROBE_BIN" -v error -select_streams a:0 \
+      -show_entries stream=channels \
+      -of default=nw=1:nk=1 "$FILE" | head -n1 | tr -d ' ' )
+
+  audio_stream_count=$( \
+    "$FFPROBE_BIN" -v error -select_streams a \
+      -show_entries stream=index -of csv=p=0 "$FILE" \
+    | wc -l | tr -d ' ' )
+
+  # Fallback if channels is empty: infer from layout
+  if [[ -z "$channels_val" || "$channels_val" == "N/A" ]]; then
+    case "${channel_layout,,}" in
+      stereo) channels_val=2 ;;
+      mono|mono*) channels_val=1 ;;
+      *5.1*) channels_val=6 ;;
+      *7.1*) channels_val=8 ;;
+      *) channels_val=0 ;;
+    esac
+  fi
+
+  # Decide: exactly one audio stream AND exactly two channels
+  if [[ "$audio_stream_count" -eq 1 && "$channels_val" -eq 2 ]]; then
+    STEREO_ONLY_RESULT="✅ PASS"
+  else
+    STEREO_ONLY_RESULT="❌ FAIL (expected single stereo track)"
+  fi
+
+  # Also expose channel layout for downstream logic (dynamic stereo step uses it)
+  export channel_layout
+
+  step_end "Phase 2 Audio"
+}
+
+
+check_dynamic_stereo() {
+
+###
+### Dynamic Stereo
+
+
+step_start "Phase 2 Dynamic Stereo Test"
+
+win_len=5
+rms_values=()
+best_diff_db=""
+best_label=""
+best_dir_label=""
+
+if [[ "$channel_layout" != "stereo" ]]; then
+  dbg "DEBUG: non-stereo layout, skipping RMS test"
+  DYNAMIC_STEREO_RESULT="⚠️  N A (layout: $channel_layout)"
+else
+  # Get full duration in seconds
+  duration_sec=$(
+    "$FFPROBE_BIN" -v error -show_entries format=duration \
+    -of default=noprint_wrappers=1:nokey=1 "$FILE" |
+    awk '{print int($1)}'
+  )
+
+
+  # Build fractional offsets: 0%, 25%, 50%, 75%
+  offsets=()
+  for frac in 0 25 50 75; do
+    off=$(( duration_sec * frac / 100 ))
+    (( off + win_len > duration_sec )) && off=$(( duration_sec - win_len - 1 ))
+    (( off < 0 )) && off=0
+    offsets+=("$off")
+  done
+  # Deduplicate and sort
+  offsets=($(printf '%s\n' "${offsets[@]}" | sort -n | uniq))
+
+  for offset in "${offsets[@]}"; do
+    cmd=( "$FFMPEG_BIN" -hide_banner -nostats -ss "$offset" -t "$win_len" \
+          -i "$FILE" -map 0:a:0 -vn \
+          -af "pan=mono|c0=0.5*c0 - 0.5*c1,astats=metadata=1:reset=1,\
+               ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-" \
+          -f null - )
+
+    rms_sample=$("${cmd[@]}" 2>&1 \
+                | grep "lavfi.astats.Overall.RMS_level" \
+                | tail -1 \
+                | cut -d= -f2 \
+                | tr -d ' ')
+
+    # Also measure per-channel RMS in the same window for a human-friendly balance label
+    left_rms=$( "$FFMPEG_BIN" -hide_banner -nostats -ss "$offset" -t "$win_len" \
+                 -i "$FILE" -map 0:a:0 -vn \
+                 -af "pan=mono|c0=FL,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-" \
+                 -f null - 2>&1 \
+               | grep "lavfi.astats.Overall.RMS_level" | tail -1 | cut -d= -f2 | tr -d ' ' )
+    right_rms=$( "$FFMPEG_BIN" -hide_banner -nostats -ss "$offset" -t "$win_len" \
+                  -i "$FILE" -map 0:a:0 -vn \
+                  -af "pan=mono|c0=FR,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-" \
+                  -f null - 2>&1 \
+                | grep "lavfi.astats.Overall.RMS_level" | tail -1 | cut -d= -f2 | tr -d ' ' )
+
+    # Validate and compute channel imbalance (absolute difference)
+    if [[ -n "$left_rms" && -n "$right_rms" && "$left_rms" != "nan" && "$right_rms" != "nan" && "$left_rms" != "-inf" && "$right_rms" != "-inf" ]]; then
+      # Convert to numeric with awk and compute |L - R|
+      diff_db=$( awk -v L="$left_rms" -v R="$right_rms" 'BEGIN{d=L-R; if(d<0)d=-d; printf "%.1f", d}' )
+      # Direction label
+      dir_label=$( awk -v L="$left_rms" -v R="$right_rms" 'BEGIN{if(L+0 < R+0) print "Left quieter"; else if(R+0 < L+0) print "Right quieter"; else print "Balanced"}' )
+      # Qualifier based on magnitude
+      qual=$( awk -v d="$diff_db" 'BEGIN{ if(d <= 3.0) print "balanced"; else if(d <= 15.0) print "slightly"; else print "much" }' )
+
+      # Direction-only human label used for concise output
+      if [[ "$dir_label" == "Balanced" ]]; then
+        human_dir_label="Balanced"
+      else
+        human_dir_label=$( echo "$dir_label" | awk -v q="$qual" '{gsub(/quieter$/, q" quieter"); print}' )
+      fi
+      # Build human label (e.g., "~46.0 dB, Left much quieter")
+      human_label="$diff_db dB, $dir_label"
+      if [[ "$dir_label" == "Balanced" ]]; then
+        human_label="$diff_db dB, Balanced"
+      else
+        # insert qualifier if not balanced
+        human_label=$( echo "$human_label" | awk -v q="$qual" '{gsub(/quieter$/, q" quieter"); print}' )
+      fi
+
+      # Keep the worst-case channel difference for reporting
+      if [[ -z "$best_diff_db" ]]; then
+        best_diff_db="$diff_db"; best_label="$human_label"; best_dir_label="$human_dir_label"
+      else
+        is_greater=$( awk -v a="$diff_db" -v b="$best_diff_db" 'BEGIN{print (a>b)?1:0}' )
+        if [[ "$is_greater" -eq 1 ]]; then
+          best_diff_db="$diff_db"; best_label="$human_label"; best_dir_label="$human_dir_label"
+        fi
+      fi
+    fi
+
+    if [[ -n "$rms_sample" && "$rms_sample" != "nan" && "$rms_sample" != "-inf" ]]; then
+      rms_values+=("$rms_sample")
+    else
+      dbg "DEBUG:   skipping this sample – invalid RMS"
+    fi
+  done
+
+  if [[ ${#rms_values[@]} -eq 0 ]]; then
+    dbg "DEBUG: no finite RMS readings – unable to analyze dynamic stereo"
+    DYNAMIC_STEREO_RESULT="⚠️ Unable to test this file – please use Adobe Audition"
+  else
+    rms_lr=$(printf '%s\n' "${rms_values[@]}" | sort -n | tail -1)
+    dbg "$(printf "DEBUG: selected RMS %.2f dB from %d valid samples" "$rms_lr" "${#rms_values[@]}")"
+    rms_lr_fmt=$( awk -v x="$rms_lr" 'BEGIN{printf "%.1f", x}' )
+    export rms_lr_fmt
+    if awk "BEGIN{exit !($rms_lr > -50)}"; then
+      DYNAMIC_STEREO_RESULT="✅ PASS"
+    else
+      DYNAMIC_STEREO_RESULT="❌ FAIL (RMS L-R too low: $rms_lr dB)"
+    fi
+
+    # Export human-friendly balance summary (fallback to L-R RMS magnitude if needed)
+    if [[ -z "$best_diff_db" ]]; then
+      # Derive a magnitude from L-R RMS as a fallback
+      best_diff_db=$( awk -v x="$rms_lr" 'BEGIN{printf "%.1f", (x<0)?-x:x}' )
+      best_label="$best_diff_db dB, Channel difference"
+      best_dir_label="Channel difference"
+    fi
+    export balance_diff_db="$best_diff_db"
+    export balance_label="$best_label"
+    export balance_label_dir="${best_dir_label:-Channel difference}"
+  fi
+fi
+
+step_end "Phase 2 Dynamic Stereo Test"
+
+}
+
+check_loudness () {
+###
+### LUFS
+###
+step_start "Phase 2 LUFS"
+
+AUDIO_TEMP="/private/tmp/$(basename "${FILE%.*}")_decoded.wav"
+
+# Decode to uncompressed 24-bit WAV
+"$FFMPEG_BIN" -y -i "$FILE" -vn -sn -dn -acodec pcm_s24le -ar 48000 "$AUDIO_TEMP" >/dev/null 2>&1
+
+# Run loudnorm and capture logs
+loudnorm_raw=$(
+  "$FFMPEG_BIN" -hide_banner -nostats -i "$AUDIO_TEMP" \
+    -af loudnorm=I=-24:LRA=7:TP=-2:print_format=json \
+    -f null - 2>&1
+)
+
+debug_log="/tmp/$(basename "${FILE%.*}")_loudnorm_debug.log"
+echo "$loudnorm_raw" > "$debug_log"
+
+# Extract only the JSON block from loudnorm log
+loudnorm_json=$(echo "$loudnorm_raw" | sed -n '/^{/,/^}/p')
+
+  # Validate JSON and parse LUFS
+  if [[ -n "$loudnorm_json" ]]; then
+    if command -v jq >/dev/null 2>&1 && echo "$loudnorm_json" | jq empty >/dev/null 2>&1; then
+      integrated_lufs=$(echo "$loudnorm_json" | jq -r '.input_i')
+    else
+      # Fallback: extract input_i without jq
+      integrated_lufs=$(echo "$loudnorm_json" | grep -o '"input_i"[^,}]*' | sed -E 's/.*"input_i"[[:space:]]*:[[:space:]]*"?(-?[0-9.]+)"?.*/\1/')
+    fi
+
+  if [[ "$integrated_lufs" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
+    if (( $(awk "BEGIN{print ($integrated_lufs >= -25 && $integrated_lufs <= -22)}") )); then
+      LOUDNESS_RESULT="✅ PASS"
+    else
+      LOUDNESS_RESULT="❌ FAIL (LUFS $integrated_lufs)"
+    fi
+  else
+    LOUDNESS_RESULT="⚠️ Unable to test this file – please use Adobe Audition"
+  fi
+else
+  # Optional: check if file is too short
+  duration_sec=$(
+    "$FFPROBE_BIN" -v error -show_entries format=duration \
+      -of default=noprint_wrappers=1:nokey=1 "$FILE"
+  )
+  short_note=""
+  if awk "BEGIN{exit ($duration_sec < 5 ? 0 : 1)}"; then
+    short_note=" (warning: file < 5s)"
+  fi
+
+  LOUDNESS_RESULT="⚠️ Unable to test this file – please use Adobe Audition$short_note"
+  echo "⚠️  See full loudnorm log at: $debug_log"
+fi
+
+rm -f "$AUDIO_TEMP"
+
+step_end "Phase 2 LUFS"
+
+
+}
+
+
+#### Helper Seconds to Timcode for the end
+
+seconds_to_tc() {                 # $1 seconds  $2 fps  $3 drop? (0/1)
+  local s="$1" fps="$2" df="$3"
+  local total_frames
+  total_frames=$(awk -v sec="$s" -v fps="$fps" 'BEGIN{printf "%.0f", sec*fps}')
+  if (( df )); then
+    # add dropped frames back to get DF code (NTSC constant-based)
+    local d=$((2 * (total_frames / 17982) ))   # 17982 = 10 min * 29.97 * 60
+    total_frames=$(( total_frames + d + 2*((total_frames - d)/1800 - (total_frames - d)/17982) ))
+  fi
+  # Use an integer fps for integer arithmetic below
+  local fps_int
+  fps_int=$(awk -v f="$fps" 'BEGIN{printf "%.0f", f}')
+  [[ -z "$fps_int" || "$fps_int" -le 0 ]] && fps_int=30
+
+  local hh=$(( total_frames / (3600*fps_int) ))
+  local mm=$(( (total_frames / (60*fps_int)) % 60 ))
+  local ss=$(( (total_frames / fps_int) % 60 ))
+  local ff=$(( total_frames % fps_int ))
+  local sep=":"
+  (( df )) && sep=";"
+  printf "%02d:%02d:%02d%s%02d" "$hh" "$mm" "$ss" "$sep" "$ff"
+}
+
+
+###############################################################################
+# Helper – convert a time‑code string (HH:MM:SS;FF or HH:MM:SS:FF) to seconds
+#          (we ignore the frame component for second‑level accuracy)
+###############################################################################
+###############################################################################
+# SMPTE → seconds  (handles 29.97 drop-frame when ‘;’ present)
+# $1 = time-code string  HH:MM:SS;FF  or HH:MM:SS:FF
+# $2 = nominal fps      (e.g. 29.97, 30, 23.98)  –  defaults to 29.97
+###############################################################################
+
+
+
+
+
+
+
+
+timecode_to_seconds() {
+    local tc="$1" fps="${2:-29.97}"
+    local drop=0
+    [[ $tc == *";"* ]] && drop=1          # semicolon → drop-frame
+
+    # Split TC into parts, tolerate missing frame field
+    IFS=':;,' read -r hh mm ss ff <<< "$tc"
+    ff=${ff:-0}
+    hh=$((10#$hh)); mm=$((10#$mm)); ss=$((10#$ss)); ff=$((10#$ff))
+
+    if (( drop )) && [[ $fps == 29.97* ]]; then
+        # SMPTE drop-frame algorithm (NTSC only)
+        # Total minutes since 00:00
+        local tot_min=$((hh*60 + mm))
+        # 2 frames dropped per minute, except every 10th
+        local drop_frames=$((2 * (tot_min - tot_min/10)))
+        local frames=$(( (hh*3600 + mm*60 + ss)*30 + ff - drop_frames ))
+        awk -v f="$frames" 'BEGIN{printf "%.3f", f/29.97}'
+    else
+        # Non-drop or non-29.97
+        local fps_int=$(awk -v f="$fps" 'BEGIN{printf "%.0f", f}')
+        local frames=$(( (hh*3600 + mm*60 + ss)*fps_int + ff ))
+        awk -v f="$frames" -v fps="$fps" 'BEGIN{printf "%.3f", f/fps}'
+    fi
+}
+###############################################################################
+# Helper – first 01:00:00:00 frame (or ;00) within first 120 s
+#   • Returns seconds-offset (int) if a suitable header is found
+#   • Returns nothing + exit-code 1 when header is missing / too far away
+###############################################################################
+find_first_zero_timecode_sec() {
+    local f="$1"
+
+    # ---------- 0) quick tag probe -----------------------------------------
+    local tc first_tc=""
+    tc=$("$FFPROBE_BIN" -v error -show_entries format_tags=timecode \
+        -of default=nw=1:nk=1 "$f" | head -n1)
+   dbg "[DEBUG] format-tag timecode='${tc:-NONE}'"
+    [[ -n $tc ]] && first_tc="$tc"
+    if [[ $tc == 01:00:00:00 || $tc == 01:00:00\;00 ]]; then printf '0\n'; return 0; fi
+
+
+    tc=$("$FFPROBE_BIN" -v error -show_entries stream_tags=timecode \
+        -of default=nw=1:nk=1 "$f" | head -n1)
+  dbg "[DEBUG] stream-tag timecode='${tc:-NONE}'"
+    [[ -z $first_tc ]] && first_tc="$tc"
+    if [[ $tc == 01:00:00:00 || $tc == 01:00:00\;00 ]]; then printf '0\n'; return 0; fi
+
+    # ---------- 1) offset from tag if within ±120 s ------------------------
+    if [[ -n $first_tc && $first_tc != NONE ]]; then
+        local fps_for_tc=${FRAME_RATE:-29.97}         # clip fps or default DF
+        local target_tc
+        [[ $first_tc == *";"* ]] && target_tc="01:00:00;00" || target_tc="01:00:00:00"
+
+        local current_seconds target_seconds
+        current_seconds=$(timecode_to_seconds "$first_tc"  "$fps_for_tc")
+        target_seconds=$(timecode_to_seconds "$target_tc" "$fps_for_tc")
+
+        local current_int=${current_seconds%%.*}
+        local target_int=${target_seconds%%.*}
+        local offset=$(( target_int - current_int ))
+
+        if (( offset >= -120 && offset <= 120 )); then
+            (( offset < 0 )) && offset=0
+            dbg "[DEBUG] first tag '$first_tc' – using offset ${offset}s to reach $target_tc"
+            printf '%d\n' "$offset"
+            return 0
+        fi
+       dbg "[DEBUG] offset ${offset}s is outside ±120 s window – ignore header"
+    fi
+
+    # ---------- 2) frame-scan first 120 s ----------------------------------
+    local pts tc_val
+    while IFS=',' read -r pts tc_val _; do
+        [[ -z $tc_val ]] && continue
+        if [[ $tc_val == 01:00:00:00 || $tc_val == 01:00:00\;00 ]]; then
+            printf '%s\n' "$pts"
+            return 0
+        fi
+    done < <("$FFPROBE_BIN" -v error -select_streams v:0 -read_intervals "%+120" \
+              -show_frames -show_entries frame=pkt_pts_time,pkt_timecode \
+              -of csv=p=0 "$f")
+
+    # ---------- 3) not found ----------------------------------------------
+  
+    return 1
+}
+
+####
+
+
+
+###############################################################################
+# Phase-2 Video – Luma IRE
+###############################################################################
+check_lumaire() {
+
+    [[ "$LUMAIRE_ON" != 1 ]] && return
+    [[ -f "$FILE" ]] || { echo "❌ File not found: $FILE"; return; }
+
+    step_start "Phase 2 Video - Luma IRE"
+base_offset=0 
+    # ── 1) derive BLACK / WHITE code-values ────────────────────────────────
+    PIX_FMT=$("$FFPROBE_BIN" -v error -select_streams v:0 -show_entries stream=pix_fmt -of csv=p=0 "$FILE")
+    COLOR_RANGE=$("$FFPROBE_BIN" -v error -select_streams v:0 -show_entries stream=color_range -of csv=p=0 "$FILE")
+
+    FULL_RANGE=0
+    [[ $COLOR_RANGE == pc || $PIX_FMT == yuvj* ]] && FULL_RANGE=1
+
+    if (( FULL_RANGE )); then
+        case $PIX_FMT in
+            *p12*) BLACK=0 WHITE=4095 ;;
+            *p10*) BLACK=0 WHITE=1023 ;;
+                 *) BLACK=0 WHITE=255  ;;
+        esac
+    else
+        case $PIX_FMT in
+            *p12*) BLACK=256 WHITE=3760 ;;
+            *p10*) BLACK=64  WHITE=940  ;;
+                 *) BLACK=16  WHITE=235  ;;
+        esac
+    fi
+    RANGE=$(( WHITE - BLACK ))
+    DIV=1
+
+    # ── 2) frame-sampling cadence ──────────────────────────────────────────
+    frame_step=24   # ≈0.5 s
+
+    # ── 3) build lavfi chain ───────────────────────────────────────────────
+    if [[ $TEST_TYPE == "Broadcast Master" ]]; then
+        zero_timecode_sec=$(find_first_zero_timecode_sec "$FILE")
+        base_offset=${zero_timecode_sec:-0}
+        
+        if [[ -z $zero_timecode_sec ]]; then
+    ##echo "[WARN] No 01:00:00:00 TC in first 2 min – running IRE from t=0" >&2
+    base_offset=0
+    tc_warning="⚠️  (No 01:00:00:00 TC in first 2 min– running IRE from t=0 )"
+    lavfi="movie=${FILE},select='not(mod(n\\,${frame_step}))',signalstats"
+else
+    base_offset=${zero_timecode_sec}
+    tc_warning=""
+    lavfi="movie=${FILE},select='gte(t\\,${zero_timecode_sec})*not(mod(n\\,${frame_step}))',signalstats"
+fi
+    else
+        lavfi="movie=${FILE},select='not(mod(n\\,${frame_step}))',signalstats"
+    fi
+
+    # ── 4) run signalstats & collect extremes (+ frame index) ──────────────
+    read -r min_luma max_luma min_idx max_idx <<< \
+      $("${FFPROBE_BIN}" -v error -threads 0 -f lavfi -i "$lavfi" \
+         -show_entries frame_tags=lavfi.signalstats.YMIN,lavfi.signalstats.YMAX \
+         -of csv=p=0 |
+        awk -F',' -v div="$DIV" '
+            BEGIN{min=65535; max=0; idx=0; min_i=-1; max_i=-1}
+            NF==2 && $1!="" && $2!="" {
+                y1=int($1/div); y2=int($2/div)
+                if (y1<min){min=y1; min_i=idx}
+                if (y2<min){min=y2; min_i=idx}
+                if (y1>max){max=y1; max_i=idx}
+                if (y2>max){max=y2; max_i=idx}
+                idx++
+            }
+            END{print min,max,min_i,max_i}')
+
+    # ── Fallback: if no frames passed after offset, retrying IRE scan from t=0 ───────
+    if [[ $min_idx -lt 0 ]]; then
+        dbg "[DEBUG] No frames after offset – retrying IRE scan from t=0"
+         # Reset base_offset since we're starting from beginning
+        base_offset=0
+        tc_warning="⚠️ (restarted from t=0 - no frames found after timecode offset)"
+        
+        lavfi="movie=${FILE},select='not(mod(n\\,${frame_step}))',signalstats"
+
+        read -r min_luma max_luma min_idx max_idx <<< \
+          $("${FFPROBE_BIN}" -v error -threads 0 -f lavfi -i "$lavfi" \
+             -show_entries frame_tags=lavfi.signalstats.YMIN,lavfi.signalstats.YMAX \
+             -of csv=p=0 |
+            awk -F',' -v div="$DIV" '
+                BEGIN{min=65535; max=0; idx=0; min_i=-1; max_i=-1}
+                NF==2 && $1!="" && $2!="" {
+                    y1=int($1/div); y2=int($2/div)
+                    if (y1<min){min=y1; min_i=idx}
+                    if (y2<min){min=y2; min_i=idx}
+                    if (y1>max){max=y1; max_i=idx}
+                    if (y2>max){max=y2; max_i=idx}
+                    idx++
+                }
+                END{print min,max,min_i,max_i}')
+    fi
+
+    # ── 5) convert to IRE & verdict ────────────────────────────────────────
+    if [[ -n $min_luma && -n $max_luma && $RANGE -ne 0 ]]; then
+
+
+
+
+# Sanity checks
+        if [[ $min_luma -lt 0 ]]; then
+            dbg "[WARN] min_luma ($min_luma) is negative - unusual!"
+        fi
+        if [[ $min_luma -lt $BLACK ]]; then
+            dbg "[WARN] min_luma ($min_luma) below BLACK level ($BLACK) - indicates sub-black"
+        fi
+        if [[ $max_luma -gt $WHITE ]]; then
+            dbg "[WARN] max_luma ($max_luma) above WHITE level ($WHITE) - indicates super-white"
+        fi
+
+        # Show the actual calculation
+        dbg "[DEBUG] Min IRE calc: ($min_luma - $BLACK) * 100 / $RANGE"
+        dbg "[DEBUG] Max IRE calc: ($max_luma - $BLACK) * 100 / $RANGE"
+
+        LUMA_MIN_IRE=$(awk -v m="$min_luma" -v B="$BLACK" -v R="$RANGE" 'BEGIN{printf "%.2f", (m-B)*100/R}')
+        LUMA_MAX_IRE=$(awk -v m="$max_luma" -v B="$BLACK" -v R="$RANGE" 'BEGIN{printf "%.2f", (m-B)*100/R}')
+
+        dbg "[DEBUG] Calculated IRE: min=$LUMA_MIN_IRE, max=$LUMA_MAX_IRE"
+        dbg "[DEBUG] ============================================="
+
+        pass_low=$(echo "$LUMA_MIN_IRE < -1" | bc)
+        pass_high=$(echo "$LUMA_MAX_IRE > 101" | bc)
+
+        dbg "[DEBUG] Threshold check: pass_low=$pass_low, pass_high=$pass_high"
+
+        if (( pass_low || pass_high )); then
+            LUMA_RANGE_RESULT="⚠️ WARNING"
+        else
+            LUMA_RANGE_RESULT="✅ PASS"
+        fi
+        LUMA_LOC_MIN=$min_idx
+        LUMA_LOC_MAX=$max_idx
+        # --- sample‑index → HH:MM:SS.ss (now accounts for base_offset) -------
+        # Resolve fps as a float (default 30) without invoking awk twice
+        fps_num=${FRAME_RATE:-30}
+        idx_to_ts() {                                  # $1 = index
+            local idx="$1"
+            local base_off="$2"  # Pass base_offset as parameter
+            
+            # seconds = (index * step / fps) + base_offset
+            local sec
+            sec=$(awk -v i="$idx" -v st="$frame_step" -v f="$fps_num" -v base="$base_offset" \
+                'BEGIN{printf "%.2f", i*st/f + base}')
+            
+            # For reporting, output SMPTE time-code instead of a decimal-seconds string
+    local df=0
+    [[ $FRAME_RATE == 29.97* && $first_tc == *";"* ]] && df=1   # drop-frame?
+    seconds_to_tc "$sec" "$fps_num" "$df"                       # << returns HH:MM:SS;FF or :
+}
+         # Pass base_offset to timestamp calculation
+        LUMA_LOC_MIN_TS=$(idx_to_ts "$LUMA_LOC_MIN" "$base_offset")
+        LUMA_LOC_MAX_TS=$(idx_to_ts "$LUMA_LOC_MAX" "$base_offset")
+    else
+        LUMA_MIN_IRE="N/A"; LUMA_MAX_IRE="N/A"; LUMA_RANGE_RESULT="ERROR"
+        LUMA_LOC_MIN_TS=""
+        LUMA_LOC_MAX_TS=""
+    fi
+
+if [[ -n $tc_warning ]]; then
+    LUMA_RANGE_RESULT="$LUMA_RANGE_RESULT $tc_warning"
+fi
+
+
+    # ── 6) export summary fields ───────────────────────────────────────────
+    export LUMA_MIN="$LUMA_MIN_IRE"  LUMA_MAX="$LUMA_MAX_IRE"  LUMA_RESULT="$LUMA_RANGE_RESULT" \
+           LUMA_LOC_MIN LUMA_LOC_MAX LUMA_LOC_MIN_TS LUMA_LOC_MAX_TS
+    export luma_min_ire="$LUMA_MIN_IRE" luma_max_ire="$LUMA_MAX_IRE"
+
+    step_end "Phase 2 Video - Luma IRE"
+}
+
+###
+
+
+####
+check_truepeaks () {
+
+####
+#  "True Peaks"
+###
+
+#################################
+# Phase 2 – True Peaks  (original WAV-split method)
+#################################
+step_start "Phase 2 TruePeaks"
+ts_phase=$(date +%s)
+
+# ---- temp workspace ------------------------------------------------
+TP_WD=$(mktemp -d /tmp/truepeak.XXXXXX)
+trap 'rm -rf "$TP_WD"' RETURN
+
+stereo_wav="$TP_WD/stereo.wav"
+left_wav="$TP_WD/left.wav"
+right_wav="$TP_WD/right.wav"
+left_log="$TP_WD/left_tp.txt"
+right_log="$TP_WD/right_tp.txt"
+
+# ---- 1) extract stereo PCM -----------------------------------------
+
+"$FFMPEG_BIN" -hide_banner -nostats -i "$FILE" -map 0:a:0 -c:a pcm_s24le -y "$stereo_wav" > /dev/null 2>&1
+
+
+# ---- 2) split to mono legs -----------------------------------------
+"$FFMPEG_BIN" -hide_banner -nostats -i "$stereo_wav" \
+  -af "pan=mono|c0=FL" -c:a pcm_s24le -y "$left_wav" > /dev/null 2>&1
+
+"$FFMPEG_BIN" -hide_banner -nostats -i "$stereo_wav" \
+  -af "pan=mono|c0=FR" -c:a pcm_s24le -y "$right_wav" > /dev/null 2>&1
+
+
+# ---- 3) loudnorm on each leg in parallel ---------------------------
+scan_tp () {          # $1 wav file  $2 stderr log
+  "$FFMPEG_BIN" -hide_banner -nostats -i "$1" \
+    -af "loudnorm=I=-24:LRA=7:TP=-1.5:print_format=summary" \
+    -f null - > /dev/null 2> "$2"
+}
+
+scan_tp "$left_wav"  "$left_log"  &
+scan_tp "$right_wav" "$right_log" &
+wait
+
+# ---- 4) pull “Input True Peak” (dBTP, numeric) ---------------------
+get_tp () { grep -m1 "Input True Peak" "$1" | awk '{print $(NF-1)}'; }
+
+left_tp=$( get_tp "$left_log" )
+right_tp=$( get_tp "$right_log" )
+
+# ---- 5) verdict helper  (±0.03 dB “close” window) ------------------
+judge_tp () {
+  local tp=$1
+  if [[ -z "$tp" || "$tp" == "-inf" ]]; then
+       echo "⚠️  Unable to measure – check in Audition"
+  elif (( $(echo "$tp <= -2.5" | bc -l) )); then
+       echo "✅ PASS ($tp dBTP)"
+  elif (( $(echo "$tp <= -1.5" | bc -l) )); then
+       echo "🟡 Close (-2 dBTP ±0.5) – verify in Audition ($tp dBTP)"
+  else
+       echo "❌ FAIL ($tp dBTP)"
+  fi
+}
+
+LEFT_TP_RESULT=$(judge_tp  "$left_tp")
+RIGHT_TP_RESULT=$(judge_tp "$right_tp")
+
+
+
+
+step_end "Phase 2 TruePeaks"
+
+}
+
+
+
+####
+### Advanced Chrome
+###
+
+check_adv_chroma () {
+
+  # Only run when selected
+  if [[ "$ADVANCEDCHROMA_ON" != "1" ]]; then
+    return
+  fi
+
+  step_start "Phase 2 Video - Chroma Excursion (native bit depth)"
+
+  # --- detect pixel format and color range (tv/pc) -------------------------
+  local PIX_FMT CR bits shift C_LOW C_HIGH
+  PIX_FMT=$("$FFPROBE_BIN" -v error -select_streams v:0 \
+             -show_entries stream=pix_fmt \
+             -of default=nokey=1:noprint_wrappers=1 "$FILE")
+  CR=$("$FFPROBE_BIN" -v error -select_streams v:0 \
+         -show_entries stream=color_range \
+         -of default=nokey=1:noprint_wrappers=1 "$FILE")
+
+  # Normalize working format for filtergraph (drop alpha planes)
+  local FMT="$PIX_FMT"
+  if [[ $FMT == yuva* ]]; then
+    FMT=${FMT/yuva/yuv}
+  fi
+
+  bits=8
+  case "$PIX_FMT" in
+    *p10*) bits=10 ;;
+    *p12*) bits=12 ;;
+  esac
+  shift=$((bits - 8))
+
+  # TV-legal chroma bounds scaled to bit depth
+  (( C_LOW  = 16  << shift ))
+  (( C_HIGH = 240 << shift ))
+
+  # Optional border crop (disabled by default). Set ADVANCEDCHROMA_BORDER>0 to enable.
+  local BORDER=${ADVANCEDCHROMA_BORDER:-0}
+  local FILTER
+  if (( BORDER > 0 )); then
+    local CROP="crop=iw-2*${BORDER}:ih-2*${BORDER}:${BORDER}:${BORDER}"
+    FILTER="format=${FMT},${CROP},signalstats,metadata=print:file=-"
+  else
+    FILTER="format=${FMT},signalstats,metadata=print:file=-"
+  fi
+ dbg "[ADV_CHROMA] PIX_FMT=$PIX_FMT FMT=$FMT bits=$bits shift=$shift CR=$CR BORDER=$BORDER"
+
+  # --- measure U/V natively; do NOT insert format= before signalstats ------
+  # This keeps subsampling and bit depth intact, matching QCTools behavior.
+  local log
+  log=$("$FFMPEG_BIN" -hide_banner -nostats -i "$FILE" -map 0:v:0 \
+        -vf "$FILTER" -f null - 2>&1)
+
+  # Accumulate global min/max for U and V across all frames
+  local CB_MIN CB_MAX CR_MIN CR_MAX
+  while IFS='=' read -r k v; do
+    case "$k" in
+      lavfi.signalstats.UMIN)
+        [[ -z "$CB_MIN" || $v -lt $CB_MIN ]] && CB_MIN=$v ;;
+      lavfi.signalstats.UMAX)
+        [[ -z "$CB_MAX" || $v -gt $CB_MAX ]] && CB_MAX=$v ;;
+      lavfi.signalstats.VMIN)
+        [[ -z "$CR_MIN" || $v -lt $CR_MIN ]] && CR_MIN=$v ;;
+      lavfi.signalstats.VMAX)
+        [[ -z "$CR_MAX" || $v -gt $CR_MAX ]] && CR_MAX=$v ;;
+    esac
+  done < <(printf '%s\n' "$log" | grep -E 'lavfi\.signalstats\.(UMIN|UMAX|VMIN|VMAX)=')
+
+  # Fallback if nothing parsed
+  if [[ -z "$CB_MIN" || -z "$CB_MAX" || -z "$CR_MIN" || -z "$CR_MAX" ]]; then
+    cb_min="N/A"; cb_max="N/A"; cr_min="N/A"; cr_max="N/A"
+    cb_status="N/A"; cr_status="N/A"; chroma_warn=0
+    step_end "Phase 2 Video - Chroma Excursion (native bit depth)"
+    return
+  fi
+
+  # Export numeric values and 8-bit display equivalents
+  cb_min=$CB_MIN; cb_max=$CB_MAX; cr_min=$CR_MIN; cr_max=$CR_MAX
+  cb_min_8=$(( cb_min >> shift )); cb_max_8=$(( cb_max >> shift ))
+  cr_min_8=$(( cr_min >> shift )); cr_max_8=$(( cr_max >> shift ))
+
+  # Evaluate against TV-legal only for limited range; label full-range as info
+  cb_status="✅ PASS"; cr_status="✅ PASS"; chroma_warn=0
+  if [[ "$CR" == "pc" ]]; then
+    cb_status="ℹ️ full-range"; cr_status="ℹ️ full-range"
+  else
+    if (( cb_min < C_LOW || cb_max > C_HIGH )); then cb_status="❌ FAIL"; chroma_warn=1; fi
+    if (( cr_min < C_LOW || cr_max > C_HIGH )); then cr_status="❌ FAIL"; chroma_warn=1; fi
+  fi
+
+  # Preformatted lines for Results section (raw code values + 8-bit approx)
+  printf -v CB_LINE "  U (Cb): min = %s (≈%s), max = %s (≈%s)    → %s" \
+          "$cb_min" "$cb_min_8" "$cb_max" "$cb_max_8" "$cb_status"
+  printf -v CR_LINE "  V (Cr): min = %s (≈%s), max = %s (≈%s)    → %s" \
+          "$cr_min" "$cr_min_8" "$cr_max" "$cr_max_8" "$cr_status"
+  export CB_LINE CR_LINE chroma_warn cb_status cr_status cb_min cr_min cb_max cr_max
+
+  step_end "Phase 2 Video - Chroma Excursion (native bit depth)"
+}
+
+
+##########
+
+
+
+
+check_adv_lumaire() {
+###############################################################################
+###############################################################################
+# Advanced Luma IRE (Optimized - keeping original logic)
+###############################################################################
+if [[ "$ADVANCEDLUMAIRE_ON" == "1" ]]; then
+    step_start "Advanced Luma IRE"
+
+  
+    [[ -f "$FILE" ]] || { echo "❌ File not found: $FILE"; return; }
+
+    step_start "Phase 2 Video - Luma IRE"
+base_offset=0 
+    # ── 1) derive BLACK / WHITE code-values ────────────────────────────────
+    PIX_FMT=$("$FFPROBE_BIN" -v error -select_streams v:0 -show_entries stream=pix_fmt -of csv=p=0 "$FILE")
+    COLOR_RANGE=$("$FFPROBE_BIN" -v error -select_streams v:0 -show_entries stream=color_range -of csv=p=0 "$FILE")
+
+    FULL_RANGE=0
+    [[ $COLOR_RANGE == pc || $PIX_FMT == yuvj* ]] && FULL_RANGE=1
+
+    if (( FULL_RANGE )); then
+        case $PIX_FMT in
+            *p12*) BLACK=0 WHITE=4095 ;;
+            *p10*) BLACK=0 WHITE=1023 ;;
+                 *) BLACK=0 WHITE=255  ;;
+        esac
+    else
+        case $PIX_FMT in
+            *p12*) BLACK=256 WHITE=3760 ;;
+            *p10*) BLACK=64  WHITE=940  ;;
+                 *) BLACK=16  WHITE=235  ;;
+        esac
+    fi
+    RANGE=$(( WHITE - BLACK ))
+    DIV=1
+
+    # ── 2) frame-sampling cadence ──────────────────────────────────────────
+    frame_step=1  
+
+    # ── 3) build lavfi chain ───────────────────────────────────────────────
+    if [[ $TEST_TYPE == "Broadcast Master" ]]; then
+        zero_timecode_sec=$(find_first_zero_timecode_sec "$FILE")
+        base_offset=${zero_timecode_sec:-0}
+        
+        if [[ -z $zero_timecode_sec ]]; then
+    ##echo "[WARN] No 01:00:00:00 TC in first 2 min – running IRE from t=0" >&2
+    base_offset=0
+    tc_warning="⚠️  (No 01:00:00:00 TC in first 2 min– running IRE from t=0 )"
+    lavfi="movie=${FILE},select='not(mod(n\\,${frame_step}))',signalstats"
+else
+    base_offset=${zero_timecode_sec}
+    tc_warning=""
+    lavfi="movie=${FILE},select='gte(t\\,${zero_timecode_sec})*not(mod(n\\,${frame_step}))',signalstats"
+fi
+    else
+        lavfi="movie=${FILE},select='not(mod(n\\,${frame_step}))',signalstats"
+    fi
+
+    # ── 4) run signalstats & collect extremes (+ frame index) ──────────────
+    read -r min_luma max_luma min_idx max_idx <<< \
+      $("${FFPROBE_BIN}" -v error -threads 0 -f lavfi -i "$lavfi" \
+         -show_entries frame_tags=lavfi.signalstats.YMIN,lavfi.signalstats.YMAX \
+         -of csv=p=0 |
+        awk -F',' -v div="$DIV" '
+            BEGIN{min=65535; max=0; idx=0; min_i=-1; max_i=-1}
+            NF==2 && $1!="" && $2!="" {
+                y1=int($1/div); y2=int($2/div)
+                if (y1<min){min=y1; min_i=idx}
+                if (y2<min){min=y2; min_i=idx}
+                if (y1>max){max=y1; max_i=idx}
+                if (y2>max){max=y2; max_i=idx}
+                idx++
+            }
+            END{print min,max,min_i,max_i}')
+
+    # ── Fallback: if no frames passed after offset, retrying IRE scan from t=0 ───────
+    if [[ $min_idx -lt 0 ]]; then
+        dbg "[DEBUG] No frames after offset – retrying IRE scan from t=0"
+         # Reset base_offset since we're starting from beginning
+        base_offset=0
+        tc_warning="⚠️ (restarted from t=0 - no frames found after timecode offset)"
+        
+        lavfi="movie=${FILE},select='not(mod(n\\,${frame_step}))',signalstats"
+
+        read -r min_luma max_luma min_idx max_idx <<< \
+          $("${FFPROBE_BIN}" -v error -threads 0 -f lavfi -i "$lavfi" \
+             -show_entries frame_tags=lavfi.signalstats.YMIN,lavfi.signalstats.YMAX \
+             -of csv=p=0 |
+            awk -F',' -v div="$DIV" '
+                BEGIN{min=65535; max=0; idx=0; min_i=-1; max_i=-1}
+                NF==2 && $1!="" && $2!="" {
+                    y1=int($1/div); y2=int($2/div)
+                    if (y1<min){min=y1; min_i=idx}
+                    if (y2<min){min=y2; min_i=idx}
+                    if (y1>max){max=y1; max_i=idx}
+                    if (y2>max){max=y2; max_i=idx}
+                    idx++
+                }
+                END{print min,max,min_i,max_i}')
+    fi
+
+    # ── 5) convert to IRE & verdict ────────────────────────────────────────
+    if [[ -n $min_luma && -n $max_luma && $RANGE -ne 0 ]]; then
+
+
+
+
+
+# Sanity checks
+        if [[ $min_luma -lt 0 ]]; then
+            dbg "[WARN] min_luma ($min_luma) is negative - unusual!"
+        fi
+        if [[ $min_luma -lt $BLACK ]]; then
+            dbg "[WARN] min_luma ($min_luma) below BLACK level ($BLACK) - indicates sub-black"
+        fi
+        if [[ $max_luma -gt $WHITE ]]; then
+            dbg "[WARN] max_luma ($max_luma) above WHITE level ($WHITE) - indicates super-white"
+        fi
+
+        # Show the actual calculation
+        dbg "[DEBUG] Min IRE calc: ($min_luma - $BLACK) * 100 / $RANGE"
+        dbg "[DEBUG] Max IRE calc: ($max_luma - $BLACK) * 100 / $RANGE"
+
+        LUMA_MIN_IRE=$(awk -v m="$min_luma" -v B="$BLACK" -v R="$RANGE" 'BEGIN{printf "%.2f", (m-B)*100/R}')
+        LUMA_MAX_IRE=$(awk -v m="$max_luma" -v B="$BLACK" -v R="$RANGE" 'BEGIN{printf "%.2f", (m-B)*100/R}')
+
+        dbg "[DEBUG] Calculated IRE: min=$LUMA_MIN_IRE, max=$LUMA_MAX_IRE"
+        dbg "[DEBUG] ============================================="
+
+        pass_low=$(echo "$LUMA_MIN_IRE < -1" | bc)
+        pass_high=$(echo "$LUMA_MAX_IRE > 101" | bc)
+
+        dbg "[DEBUG] Threshold check: pass_low=$pass_low, pass_high=$pass_high"
+
+        if (( pass_low || pass_high )); then
+            LUMA_RANGE_RESULT="⚠️ WARNING"
+        else
+            LUMA_RANGE_RESULT="✅ PASS"
+        fi
+        LUMA_LOC_MIN=$min_idx
+        LUMA_LOC_MAX=$max_idx
+        # --- sample‑index → HH:MM:SS.ss (now accounts for base_offset) -------
+        # Resolve fps as a float (default 30) without invoking awk twice
+        fps_num=${FRAME_RATE:-30}
+        idx_to_ts() {                                  # $1 = index
+            local idx="$1"
+            local base_off="$2"  # Pass base_offset as parameter
+            
+            # seconds = (index * step / fps) + base_offset
+            local sec
+            sec=$(awk -v i="$idx" -v st="$frame_step" -v f="$fps_num" -v base="$base_offset" \
+           'BEGIN{printf "%.2f", base + i*st/f}')
+            
+            # For reporting, output SMPTE time-code instead of a decimal-seconds string
+    local df=0
+    [[ $FRAME_RATE == 29.97* && $first_tc == *";"* ]] && df=1   # drop-frame?
+    seconds_to_tc "$sec" "$fps_num" "$df"                       # << returns HH:MM:SS;FF or :
+}
+         # Pass base_offset to timestamp calculation
+        LUMA_LOC_MIN_TS=$(idx_to_ts "$LUMA_LOC_MIN" "$base_offset")
+        LUMA_LOC_MAX_TS=$(idx_to_ts "$LUMA_LOC_MAX" "$base_offset")
+    else
+        LUMA_MIN_IRE="N/A"; LUMA_MAX_IRE="N/A"; LUMA_RANGE_RESULT="ERROR"
+        LUMA_LOC_MIN_TS=""
+        LUMA_LOC_MAX_TS=""
+    fi
+
+if [[ -n $tc_warning ]]; then
+    LUMA_RANGE_RESULT="$LUMA_RANGE_RESULT $tc_warning"
+fi
+
+
+    # ── 6) export summary fields ───────────────────────────────────────────
+    export LUMA_MIN="$LUMA_MIN_IRE"  LUMA_MAX="$LUMA_MAX_IRE"  LUMA_RESULT="$LUMA_RANGE_RESULT" \
+           LUMA_LOC_MIN LUMA_LOC_MAX LUMA_LOC_MIN_TS LUMA_LOC_MAX_TS
+    export luma_min_ire="$LUMA_MIN_IRE" luma_max_ire="$LUMA_MAX_IRE"
+
+    step_end "Advanced Luma IRE"
+fi
+}
+
+################################################################################
+###
+### Aditional Broadcast MAster Functions
+####
+
+#####
+
+check_timecode_format() {
+  # Extract timecode string from metadata
+  local tc_str
+  tc_str=$("$FFPROBE_BIN" -v error -print_format json -show_entries stream_tags=timecode "$FILE" | \
+            grep -o '"timecode": *"[^"]*"' | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
+
+  if [[ -z "$tc_str" ]]; then
+    TIMECODE_FORMAT_RESULT="❌ FAIL (No timecode found)"
+  elif [[ "$tc_str" =~ ";" || "$tc_str" =~ "," ]]; then
+    TIMECODE_FORMAT_RESULT="✅ PASS (Drop-frame: $tc_str)"
+  else
+    TIMECODE_FORMAT_RESULT="❌ FAIL (Non-drop-frame: $tc_str)"
+  fi
+}
+
+
+
+check_video_segment_times() {
+  local start_times names durations count i name s d in_tc out_tc duration_sec markers_out
+
+  # Grab ExifTool paths and ensure EXIFTOOL_BIN is set
+  : "${EXIFTOOL_BIN:=exiftool}"
+
+
+
+  # Get comma-separated lists (no whitespace)
+  start_times=$("$EXIFTOOL_BIN" -s -s -s -TracksMarkersStartTime "$FILE" | tr -d ' ')
+  names=$("$EXIFTOOL_BIN" -s -s -s -TracksMarkersName "$FILE" | sed 's/, /,/g')
+  durations=$("$EXIFTOOL_BIN" -s -s -s -TracksMarkersDuration "$FILE" | tr -d ' ')
+
+  # Convert to arrays
+  IFS=',' read -ra starts <<< "$start_times"
+  IFS=',' read -ra titles <<< "$names"
+  IFS=',' read -ra lens <<< "$durations"
+  count=${#starts[@]}
+  markers_out="    Name       | In Time     | Out Time    | Duration (s)\n"
+  markers_out+="    -----------+-------------+-------------+--------------\n"
+
+  # Drop-frame converter
+  frames_to_dropframe() {
+    local frames=$1
+    local fps=30
+    local d=2
+    local total_minutes=$((frames / (fps * 60)))
+    local drop_frames=$((d * (total_minutes - (total_minutes / 10))))
+    local tc_frames=$((frames + drop_frames))
+    local hh=$((tc_frames / (fps * 60 * 60)))
+    local mm=$(( (tc_frames / (fps * 60)) % 60 ))
+    local ss=$(( (tc_frames / fps) % 60 ))
+    local ff=$((tc_frames % fps))
+    printf "%02d:%02d:%02d;%02d" "$hh" "$mm" "$ss" "$ff"
+  }
+
+  for ((i=0; i<count; i++)); do
+    name="${titles[i]}"
+    s="${starts[i]}"
+    d="${lens[i]}"
+    # Calculate timecodes and duration in seconds
+    in_tc=$(frames_to_dropframe "$s")
+    out_tc=""
+    duration_sec=""
+    if [[ -n "$d" ]]; then
+      out_tc=$(frames_to_dropframe "$((s + d))")
+      duration_sec=$((d / 30))
+    else
+      out_tc="--"
+      duration_sec="--"
+    fi
+    # Table row, padded columns
+    markers_out+="    $(printf '%-10s | %-11s | %-11s | %-6s' "$name" "$in_tc" "$out_tc" "$duration_sec")\n"
+  done
+
+  if [[ $count -gt 0 ]]; then
+    VIDEO_MARKERS_RESULT="Markers found by ExifTool:"
+    VIDEO_MARKERS_TIMES="$markers_out"
+  else
+    VIDEO_MARKERS_RESULT="No markers found by ExifTool"
+    VIDEO_MARKERS_TIMES=""
+  fi
+}
+
+####
+
+check_total_run_time() {
+  local total_frames=""
+  local duration_sec=""
+  local tc_out=""
+
+  # Try ExifTool first (most accurate if markers/exported from Premiere)
+  total_frames=$("$EXIFTOOL_BIN" -s -s -s -VideoFrameCount "$FILE")
+  if [[ -z "$total_frames" ]]; then
+    # Fallback: FFprobe frame count for video stream 0
+    total_frames=$("$FFPROBE_BIN" -v error -select_streams v:0 \
+      -show_entries stream=nb_frames \
+      -of default=noprint_wrappers=1:nokey=1 "$FILE")
+  fi
+
+  # Fallback for missing/empty
+  if [[ -z "$total_frames" || "$total_frames" == "N/A" ]]; then
+    # Fallback to duration in seconds
+    duration_sec=$("$FFPROBE_BIN" -v error -select_streams v:0 \
+      -show_entries stream=duration \
+      -of default=noprint_wrappers=1:nokey=1 "$FILE" | awk '{print int($1)}')
+    # Assume 29.97 for timecode calc
+    total_frames=$((duration_sec * 30))
+  else
+    duration_sec=$((total_frames / 30))
+  fi
+
+  # Drop-frame converter (copy from above)
+  frames_to_dropframe() {
+    local frames=$1
+    local fps=30
+    local d=2
+    local total_minutes=$((frames / (fps * 60)))
+    local drop_frames=$((d * (total_minutes - (total_minutes / 10))))
+    local tc_frames=$((frames + drop_frames))
+    local hh=$((tc_frames / (fps * 60 * 60)))
+    local mm=$(( (tc_frames / (fps * 60)) % 60 ))
+    local ss=$(( (tc_frames / fps) % 60 ))
+    local ff=$((tc_frames % fps))
+    printf "%02d:%02d:%02d;%02d" "$hh" "$mm" "$ss" "$ff"
+  }
+
+  tc_out=$(frames_to_dropframe "$total_frames")
+
+  # Final pretty output
+  if [[ -n "$total_frames" && "$total_frames" != "N/A" ]]; then
+    TOTAL_RUN_TIME_RESULT="Total Runtime: $tc_out "
+  else
+    TOTAL_RUN_TIME_RESULT="Unable to determine total runtime"
+  fi
+}
+
+
+
+
+
+
+
+#####
+
+
+
+
+
+
+
+
+check_has_608_cc() {
+  # Check for 608 captions in subtitle streams (stream type 's')
+  if "$FFPROBE_BIN" -v error -select_streams s \
+      -show_entries stream=codec_name \
+      -of default=nw=1:nk=1 "$FILE" | grep -qi 'eia_608'; then
+    HAS_608_CC="Yes"
+    HAS_608_CC_RESULT="✅ PASS"
+  else
+    HAS_608_CC="No"
+    HAS_608_CC_RESULT="❌ FAIL (no 608 CC found)"
+  fi
+}
+
+check_has_708_cc() {
+  # Check for 708 captions in subtitle streams (stream type 's')
+  if "$FFPROBE_BIN" -v error -select_streams s \
+      -show_entries stream=codec_name \
+      -of default=nw=1:nk=1 "$FILE" | grep -qi 'eia_708'; then
+    HAS_708_CC="Yes"
+    HAS_708_CC_RESULT="✅ PASS"
+  else
+    HAS_708_CC="No"
+    HAS_708_CC_RESULT="❌ FAIL (no 708 CC found)"
+  fi
+}
+
+#######
+
+
+check_caption_profanity() {
+  local srt_out="/tmp/$(basename "${FILE%.*}")_captions.srt"
+
+  # Extract first subtitle stream to SRT quietly
+  "$FFMPEG_BIN" -hide_banner -nostats -y -i "$FILE" -map 0:s:0 -c:s srt "$srt_out" >/dev/null 2>&1
+
+  CAPTION_PROFANITY_REPORT=""
+
+  if [[ -s "$srt_out" ]]; then
+       # Run cussbuster and capture its output
+    local profanity_result
+   
+    profanity_result=$("$PYTHON_BIN" "$BASE_DIR/cussbuster2000.py" "$srt_out")
+  
+  
+    # If the tool produced a report, preserve the header and all masked lines
+    if echo "$profanity_result" | grep -qi "^Profanity report for:"; then
+      CAPTION_PROFANITY_RESULT="❌ FAIL (Profanity detected in captions)"
+            CAPTION_PROFANITY_REPORT="$(
+  echo "$profanity_result" \
+  | awk '/^Profanity report for:/,0' \
+  | sed -E \
+      -e 's/<font[^>]*>//g' \
+      -e 's:</font>::g' \
+      -e 's/\{\\[^}]*\}//g' \
+      -e 's/\\\\h/ /g' \
+      -e 's/\\h/ /g' \
+      -e 's/\.\.\.\s*-\s*/... /g' \
+      -e 's/ - \[/ [/g' \
+      -e 's/face="[^"]*"[[:space:]]*>//g' \
+      -e 's/>[[:space:]]*-+[[:space:]]*/ /g' \
+      -e 's/<[^>]+>//g' \
+      -e 's/[[:space:]]+/ /g' \
+      -e 's/^[[:space:]]+//' \
+      -e 's/[[:space:]]+$//'
+)"
+    else
+      CAPTION_PROFANITY_RESULT="✅ PASS (No profanity found in captions)"
+      CAPTION_PROFANITY_REPORT=""
+    fi
+  else
+    CAPTION_PROFANITY_RESULT="⚠️ No captions extracted"
+
+  fi
+
+  rm -f "$srt_out"
+}
+
+
+
+
+#################################################################################
+
+
+
+# ─────────────────────────────────────────────────────────────
+###### Process File - Main Per File Logic
+# ─────────────────────────────────────────────────────────────
+check_placeholder() {
+  local checkname="$1"
+  echo "⚠️  $checkname not yet implemented for $TEST_TYPE"
+}
+
+
+process_file() {
+  local FILE="$1"
+  local PHASE1_ON="$2"
+  local IFRAME_ON="$3"
+  local PHASE2_ON="$4"
+  local LUMAIRE_ON="$5"
+  local TRUEPEAKS_ON="$6"
+  local ADVANCEDLUMAIRE_ON="$7"
+  local ADVANCEDCHROMA_ON="$8"
+  
+
+
+
+
+
+  if [[ ! -f "$FILE" ]]; then
+      echo "Skipping '$FILE' (not a regular file)"
+      return
+  fi
+  
+  local FILE_NAME
+  FILE_NAME=$(basename "$FILE")
+  echo "Analyzing: $FILE_NAME"
+  echo "Test Type: $TEST_TYPE"
+
+  # Initialize variables to avoid undefined variable errors
+  FILE_TYPE_RESULT=""
+  VIDEO_BIT_RATE_RESULT=""
+  VIDEO_CODEC_RESULT=""
+  RESOLUTION_RESULT=""
+  ASPECT_RATIO_RESULT=""
+  FRAME_RATE_RESULT=""
+  CHROMA_RESULT=""
+  SCAN_RESULT=""
+  AUDIO_CODEC_RESULT=""
+  AUDIO_BR_RESULT=""
+  AUDIO_SR_RESULT=""
+  AUDIO_BD_RESULT=""
+  FRAME_TYPE_RESULT=""
+  FRAME_TYPE_MSG=""
+  DARK_FRAME_RESULT=""
+  DARK_FRAME_MSG=""
+  TIMECODE_RESULT=""
+  CAPTION_PROFANITY_RESULT=""
+  LUMA_RANGE_RESULT=""
+  STEREO_ONLY_RESULT=""
+  DYNAMIC_STEREO_RESULT=""
+  LOUDNESS_RESULT=""
+  LEFT_TP_RESULT=""
+  RIGHT_TP_RESULT=""
+  CHROMA_RESULT=""
+
+
+
+
+### Set Variables Video and Audio Stream
+
+  VIDEO_STREAM=$("$FFPROBE_BIN" -v error -select_streams v:0 \
+      -show_entries stream=bit_rate,width,height,r_frame_rate,pix_fmt,field_order,display_aspect_ratio \
+      -of default=noprint_wrappers=1 "$FILE")
+ AUDIO_STREAM=$("$FFPROBE_BIN" -v error -select_streams a:0 \
+      -show_entries stream=codec_name,bit_rate,sample_rate,sample_fmt,channels \
+      -of default=noprint_wrappers=1 "$FILE")
+
+
+
+######
+# Define Which Functions To Call
+#############
+for group in PHASE1 IFRAME CAPTIONPROFANITY PHASE2 LUMAIRE TRUEPEAKS ADVANCEDCONTINUITY ADVANCEDLUMAIRE ADVANCEDCHROMA; do
+  group_var="${group}_ON"
+  group_enabled="${!group_var}"
+  if [[ "$group_enabled" == "1" ]]; then
+    for check_fn in $(get_checks_for_group "$TEST_TYPE" "$group"); do
+      if declare -f "$check_fn" >/dev/null; then
+        "$check_fn" "$FILE"
+      else
+        echo "⚠️  Function $check_fn not implemented"
+      fi
+    done
+  fi
+done
+
+
+
+
+
+# -------------------------------------------------------
+
+
+# --------------------
+# OUTPUT
+# --------------------
+
+# ----- CONDITIONAL OUTPUT BY SELECTED CHECKS -----
+
+# Phase 1 group
+if [[ "$PHASE1_ON" == "1" ]]; then
+  echo "------------------------------------------------------------"
+  echo "Analyzing: $FILE_NAME"
+  echo "Test Type: $TEST_TYPE"
+  echo "------------------------------------------------------------"
+  echo "— Phase 1 —"
+  echo "FILE TYPE:             ${FILE_TYPE:-–} ${FILE_TYPE_RESULT:+– $FILE_TYPE_RESULT}"
+  echo "VIDEO BIT RATE:        ${VIDEO_BIT_RATE:-–} ${VIDEO_BIT_RATE_RESULT:+– $VIDEO_BIT_RATE_RESULT}"
+  echo "VIDEO CODEC:           ${VIDEO_CODEC:-–} ${VIDEO_CODEC_RESULT:+– $VIDEO_CODEC_RESULT}"
+  echo "RESOLUTION:            ${RESOLUTION:-–} ${RESOLUTION_RESULT:+– $RESOLUTION_RESULT}"
+  echo "ASPECT RATIO:          ${ASPECT_RATIO:-–} ${ASPECT_RATIO_RESULT:+– $ASPECT_RATIO_RESULT}"
+  echo "FRAME RATE:            ${FRAME_RATE:-–} ${FRAME_RATE_RESULT:+– $FRAME_RATE_RESULT}"
+  echo "CHROMA SAMPLING:       ${CHROMA:-–} ${CHROMA_RESULT:+– $CHROMA_RESULT}"
+  echo "VIDEO SCAN TYPE:       ${SCAN_TYPE:-–} ${SCAN_RESULT:+– $SCAN_RESULT}"
+  echo "AUDIO CODEC:           ${AUDIO_CODEC:-–} ${AUDIO_CODEC_RESULT:+– $AUDIO_CODEC_RESULT}"
+  echo "AUDIO CHANNELS:        ${AUDIO_CHANNELS:-–}"
+  echo "AUDIO BIT RATE:        ${AUDIO_BIT_RATE:-–} ${AUDIO_BR_RESULT:+– $AUDIO_BR_RESULT}"
+  echo "AUDIO SAMPLE RATE:     ${AUDIO_SR:-–} ${AUDIO_SR_RESULT:+– $AUDIO_SR_RESULT}"
+  echo "AUDIO BIT DEPTH:       ${BIT_DEPTH:-–} ${AUDIO_BD_RESULT:+– $AUDIO_BD_RESULT}"
+  # Broadcast Master adds a timecode-format check in Phase 1
+  if [[ -n "$TIMECODE_FORMAT_RESULT" ]]; then
+    echo "TIMECODE FORMAT:       ${TIMECODE_FORMAT:-–} – $TIMECODE_FORMAT_RESULT"
+  fi
+  echo "VIDEO ASPECT / POSITION / SCALE     MANUAL TEST NEEDED"
+fi
+
+ # I-Frame group
+if [[ "$IFRAME_ON" == "1" ]]; then
+  echo "I FRAME CHECK:         ${FRAME_TYPE_MSG:-–}"
+fi
+
+# Continuity group
+if [[ "$ADVANCEDCONTINUITY_ON" == "1" ]]; then
+  echo "CONTINUITY:           ${CONTINUITY_MSG:-–}"
+fi
+
+# Caption Profanity group
+if [[ "$CAPTIONPROFANITY_ON" == "1" ]]; then
+  echo "CAPTION PROFANITY:      ${CAPTION_PROFANITY_RESULT:-–}"
+  if [[ -n "$CAPTION_PROFANITY_REPORT" ]]; then
+    echo "----- Cussbuster Report -----"
+    echo "$CAPTION_PROFANITY_REPORT"
+  fi
+fi
+
+# Phase 2 group (test-type aware)
+if [[ "$PHASE2_ON" == "1" ]]; then
+  echo "— Phase 2 ($TEST_TYPE) —"
+  case "$TEST_TYPE" in
+    "SVOD")
+      # SVOD Phase 2 checks
+      if [[ -n "$DARK_FRAME_MSG" ]]; then
+        echo "HEAD AND TAIL:         $DARK_FRAME_MSG"
+      fi
+      if [[ -n "$TIMECODE_RESULT" || -n "$TIMECODE_START" ]]; then
+        echo "TIMECODE START:        ${TIMECODE_START:-–} – ${TIMECODE_RESULT:-}"
+      fi
+      if [[ -n "$STEREO_ONLY_RESULT" ]]; then
+        echo "STEREO ONLY:           $STEREO_ONLY_RESULT"
+      fi
+      if [[ -n "$DYNAMIC_STEREO_RESULT" ]]; then
+        echo "DYNAMIC STEREO:        $DYNAMIC_STEREO_RESULT   (Stereo activity, L–R RMS: ${rms_lr_fmt:-N/A} dB; Loudness difference at spot‑check: ~${balance_diff_db:-N/A} dB — ${balance_label_dir:-N/A})"
+      fi
+      if [[ -n "$LOUDNESS_RESULT" ]]; then
+        echo "LOUDNESS (LUFS):       ${integrated_lufs:-N/A}        → $LOUDNESS_RESULT"
+      fi
+      ;;
+    "Broadcast Master")
+      # Broadcast Master Phase 2 checks
+      if [[ -n "$STEREO_ONLY_RESULT" ]]; then
+        echo "STEREO ONLY:           $STEREO_ONLY_RESULT"
+      fi
+      if [[ -n "$LOUDNESS_RESULT" ]]; then
+        echo "LOUDNESS (LUFS):       ${integrated_lufs:-N/A}        → $LOUDNESS_RESULT"
+      fi
+      if [[ -n "$TIMECODE_RESULT" || -n "$TIMECODE_START" ]]; then
+        echo "TIMECODE START:        ${TIMECODE_START:-–} – ${TIMECODE_RESULT:-}"
+      fi
+      if [[ -n "$VIDEO_MARKERS_RESULT" ]]; then
+        echo "VIDEO MARKERS:         $VIDEO_MARKERS_RESULT"
+        if [[ -n "$VIDEO_MARKERS_TIMES" ]]; then
+          echo -e "$VIDEO_MARKERS_TIMES"
+        fi
+      fi
+      if [[ -n "$TOTAL_RUN_TIME_RESULT" ]]; then
+        echo "TOTAL RUN TIME:        $TOTAL_RUN_TIME_RESULT"
+      fi
+      if [[ -n "$HAS_608_CC_RESULT" ]]; then
+        echo "608 CAPTIONS PRESENT:  ${HAS_608_CC:-–} – $HAS_608_CC_RESULT"
+      fi
+      if [[ -n "$HAS_708_CC_RESULT" ]]; then
+        echo "708 CAPTIONS PRESENT:  ${HAS_708_CC:-–} – $HAS_708_CC_RESULT"
+      fi
+      ;;
+  esac
+fi
+
+# Luma IRE group (standard or advanced)
+if [[ "$LUMAIRE_ON" == "1" || "$ADVANCEDLUMAIRE_ON" == "1" ]]; then
+  if [[ "$ADVANCEDLUMAIRE_ON" == "1" && "$LUMAIRE_ON" != "1" ]]; then
+    echo "— Advanced Luma IRE —"
+  else
+    echo "— Luma IRE —"
+  fi
+  echo "LUMA RANGE (IRE):      min ${luma_min_ire:-N/A} at (${LUMA_LOC_MIN_TS:-}), max ${luma_max_ire:-N/A} at (${LUMA_LOC_MAX_TS:-}), ${LUMA_RANGE_RESULT:-}"
+fi
+
+# True Peaks group
+if [[ "$TRUEPEAKS_ON" == "1" ]]; then
+  [[ -n "$LEFT_TP_RESULT"  ]] && echo "Left  channel TP check : $LEFT_TP_RESULT"
+  [[ -n "$RIGHT_TP_RESULT" ]] && echo "Right channel TP check : $RIGHT_TP_RESULT"
+fi
+
+# Advanced Chroma group
+if [[ "$ADVANCEDCHROMA_ON" == "1" ]]; then
+  echo "CHROMA LEVELS:"
+  [[ -n "$CB_LINE" ]] && echo "$CB_LINE"
+  [[ -n "$CR_LINE" ]] && echo "$CR_LINE"
+  if [[ "${chroma_warn:-0}" -eq 1 ]]; then
+    echo "  ⚠️ WARNING: Chroma excursion out of broadcast safe range"
+  fi
+fi
+
+
+ echo "------------------------------------------------------------"
+echo "Check complete: \"$FILE_NAME\""
+ 
+  echo ""
+} # <--- END OF process_file
+
+
+
+################################################################################
+
+
+
+GROUPS=(PHASE1 IFRAME CAPTIONPROFANITY PHASE2 LUMAIRE TRUEPEAKS ADVANCEDCONTINUITY ADVANCEDLUMAIRE ADVANCEDCHROMA)
+
+for FILE in "${FILES[@]}"; do
+  # Call your big per-file logic function (which you already wrote above!)
+  process_file \
+    "$FILE" \
+    "$PHASE1_ON" "$IFRAME_ON" "$PHASE2_ON" \
+    "$LUMAIRE_ON" "$TRUEPEAKS_ON" "$ADVANCEDLUMAIRE_ON" "$ADVANCEDCHROMA_ON"
+
+done
+
+
+
+
+# ─────────────────────────────────────────────────────────────
+# 5) one notification at the very end
+# ─────────────────────────────────────────────────────────────
+afplay /System/Library/Sounds/Glass.aiff
+
+
+# ---------- print elapsed time (verbose only) ----------
+
+  elapsed=$SECONDS
+  printf "\nTotal TE processing time: %02d:%02d:%02d\n" \
+          $((elapsed/3600)) $((elapsed/60%60)) $((elapsed%60))
