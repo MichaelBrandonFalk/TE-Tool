@@ -461,6 +461,14 @@ else
     log_error "Python3 not found - some color analysis may fail"
 fi
 
+# Locate jq
+if [[ -x "$BASE_DIR/jq" ]]; then
+    JQ_BIN="$BASE_DIR/jq"
+elif command -v jq &>/dev/null; then
+    JQ_BIN=$(command -v jq)
+else
+    JQ_BIN=""
+fi
 
 #Locate EXIF TOOL
 # Try bundled first, then system paths
@@ -1166,8 +1174,8 @@ loudnorm_json=$(echo "$loudnorm_raw" | sed -n '/^{/,/^}/p')
 
   # Validate JSON and parse LUFS
   if [[ -n "$loudnorm_json" ]]; then
-    if command -v jq >/dev/null 2>&1 && echo "$loudnorm_json" | jq empty >/dev/null 2>&1; then
-      integrated_lufs=$(echo "$loudnorm_json" | jq -r '.input_i')
+    if [[ -n "$JQ_BIN" ]] && echo "$loudnorm_json" | "$JQ_BIN" empty >/dev/null 2>&1; then
+      integrated_lufs=$(echo "$loudnorm_json" | "$JQ_BIN" -r '.input_i')
     else
       # Fallback: extract input_i without jq
       integrated_lufs=$(echo "$loudnorm_json" | grep -o '"input_i"[^,}]*' | sed -E 's/.*"input_i"[[:space:]]*:[[:space:]]*"?(-?[0-9.]+)"?.*/\1/')
@@ -2085,7 +2093,7 @@ check_caption_profanity() {
        # Run cussbuster and capture its output
     local profanity_result
    
-    profanity_result=$("$PYTHON_BIN" "$BASE_DIR/cussbuster2000.py" "$srt_out")
+    profanity_result=$("$PYTHON_BIN" "$BASE_DIR/Cussbuster2000.py" "$srt_out")
   
   
     # If the tool produced a report, preserve the header and all masked lines
