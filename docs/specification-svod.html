@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TE Tool Specification Sheet</title>
-  <meta name="description" content="Acceptable values and ranges used by TE Tool A11 checks.">
+  <title>TE Tool SVOD Specification</title>
+  <meta name="description" content="SVOD acceptable values and ranges used by TE Tool A11 checks.">
   <style>
     :root {
       color-scheme: light;
@@ -78,12 +78,6 @@
       letter-spacing: 0;
     }
 
-    h3 {
-      margin: 22px 0 10px;
-      font-size: 18px;
-      letter-spacing: 0;
-    }
-
     p {
       margin: 0 0 12px;
       color: var(--muted);
@@ -95,37 +89,6 @@
       color: #5f4300;
       border-radius: 8px;
       padding: 14px 16px;
-    }
-
-    .choice-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 16px;
-    }
-
-    .choice {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 18px;
-      background: #fff;
-    }
-
-    .choice h3 {
-      margin-top: 0;
-    }
-
-    .button {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 42px;
-      padding: 0 16px;
-      border-radius: 6px;
-      background: var(--accent);
-      color: white;
-      font-weight: 700;
-      text-decoration: none;
-      white-space: nowrap;
     }
 
     .table-wrap {
@@ -182,110 +145,40 @@
       color: var(--muted);
       font-size: 14px;
     }
-
-    @media print {
-      body {
-        background: #fff;
-      }
-
-      header,
-      section {
-        border: 0;
-      }
-
-      .back {
-        display: none;
-      }
-
-      .wrap {
-        width: 100%;
-      }
-    }
-
-    @media (max-width: 760px) {
-      .choice-grid {
-        grid-template-columns: 1fr;
-      }
-    }
   </style>
 </head>
 <body>
   <header>
     <div class="wrap hero">
       <a class="back" href="./">Back to downloads</a>
-      <h1>TE Tool Specification Sheet</h1>
-      <p class="lead">Acceptable values and ranges implemented in TE Tool A11. This sheet was derived from <code>Resources/script</code> and the caption profanity helper in <code>Resources/Cussbuster2000.py</code>.</p>
+      <h1>SVOD Specification Sheet</h1>
+      <p class="lead">SVOD acceptable values and ranges implemented in TE Tool A11. Derived from <code>Resources/script</code>.</p>
     </div>
   </header>
 
   <main class="wrap">
     <section>
-      <h2>Choose a Spec Sheet</h2>
-      <div class="choice-grid">
-        <div class="choice">
-          <h3>SVOD Specification</h3>
-          <p>SVOD-only Phase 1, Phase 2, and optional check thresholds.</p>
-          <a class="button" href="specification-svod.html">Open SVOD Specs</a>
-        </div>
-        <div class="choice">
-          <h3>Broadcast Master Specification</h3>
-          <p>Broadcast Master Phase 1, Phase 2, caption, marker, and optional check thresholds.</p>
-          <a class="button" href="specification-broadcast.html">Open Broadcast Specs</a>
-        </div>
-      </div>
-    </section>
-
-    <section>
-      <h2>Important Implementation Notes</h2>
-      <p class="note">The script defines Broadcast Master targets of ProRes 4444, 200 Mb/s minimum, 29.97 fps, and 16:9 near the top of the file. The current Phase 1 codec and video bit rate functions do not use those variables. They currently enforce ProRes 422 HQ (<code>apch</code>) and 145 Mb/s minimum for both SVOD and Broadcast Master.</p>
-      <ul>
-        <li>File extension checks are case-sensitive. <code>.mov</code> passes; <code>.MOV</code> does not.</li>
-        <li>Several checks return warnings instead of failures when the value is measurable but outside the preferred range.</li>
-        <li>Video aspect, position, and scale are listed by the app as a manual test and are not automatically evaluated.</li>
-      </ul>
-    </section>
-
-    <section>
-      <h2>Test Groups</h2>
+      <h2>SVOD Test Groups</h2>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Test Type</th>
               <th>Group</th>
               <th>Checks Run</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td>SVOD</td>
               <td>Phase 1</td>
               <td>File type, video bit rate, video codec, resolution, aspect ratio, frame rate, chroma sampling, scan type, audio codec, audio bit rate, audio sample rate, audio bit depth.</td>
             </tr>
             <tr>
-              <td>SVOD</td>
               <td>Phase 2</td>
               <td>Head/tail dark frames, stereo-only audio, dynamic stereo, loudness, timecode start.</td>
             </tr>
             <tr>
-              <td>SVOD</td>
               <td>Optional groups</td>
               <td>I-frame only, Luma IRE, True Peaks, Advanced Luma IRE, Advanced Chroma, Advanced Continuity.</td>
-            </tr>
-            <tr>
-              <td>Broadcast Master</td>
-              <td>Phase 1</td>
-              <td>Same Phase 1 checks as SVOD, plus timecode format.</td>
-            </tr>
-            <tr>
-              <td>Broadcast Master</td>
-              <td>Phase 2</td>
-              <td>Stereo-only audio, loudness, timecode start, marker table, total run time, 608 caption presence, 708 caption presence.</td>
-            </tr>
-            <tr>
-              <td>Broadcast Master</td>
-              <td>Optional groups</td>
-              <td>I-frame only, caption profanity, Luma IRE, True Peaks, Advanced Luma IRE, Advanced Chroma, Advanced Continuity.</td>
             </tr>
           </tbody>
         </table>
@@ -293,14 +186,13 @@
     </section>
 
     <section>
-      <h2>Phase 1 Media Checks</h2>
+      <h2>SVOD Phase 1</h2>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
               <th>Field</th>
               <th>Acceptable Value or Range</th>
-              <th>Applies To</th>
               <th>Failure / Warning Behavior</th>
             </tr>
           </thead>
@@ -308,85 +200,66 @@
             <tr>
               <td>File type</td>
               <td>Extension must be exactly <code>mov</code>.</td>
-              <td>SVOD, Broadcast Master</td>
-              <td>Any other extension fails.</td>
+              <td>Any other extension fails. The check is case-sensitive.</td>
             </tr>
             <tr>
               <td>Video codec</td>
               <td><code>codec_tag_string</code> must be <code>apch</code>, reported as ProRes 422 HQ.</td>
-              <td>SVOD, Broadcast Master</td>
-              <td>Any other codec tag fails. Current code does not accept ProRes 4444 for Broadcast Master.</td>
+              <td>Any other codec tag fails.</td>
             </tr>
             <tr>
               <td>Video bit rate</td>
-              <td>Must be a numeric stream bit rate greater than or equal to <code>145000000</code> bits/s, or 145.0 Mb/s.</td>
-              <td>SVOD, Broadcast Master</td>
-              <td>Lower values fail. Missing or non-numeric bit rate fails. Current code does not enforce the declared 200 Mb/s Broadcast Master target.</td>
+              <td>Must be greater than or equal to <code>145000000</code> bits/s, or 145.0 Mb/s.</td>
+              <td>Lower, missing, or non-numeric values fail.</td>
             </tr>
             <tr>
               <td>Resolution</td>
               <td>Exactly <code>1920x1080</code>.</td>
-              <td>SVOD, Broadcast Master</td>
               <td>Any other width or height fails.</td>
             </tr>
             <tr>
               <td>Aspect ratio</td>
               <td><code>display_aspect_ratio</code> must be <code>16:9</code>. If metadata is unavailable, calculated width/height must be greater than <code>1.76</code> and less than <code>1.79</code>.</td>
-              <td>SVOD, Broadcast Master</td>
               <td>Anything not resolved to 16:9 fails.</td>
             </tr>
             <tr>
               <td>Frame rate</td>
-              <td>SVOD passes at <code>23.98</code>. Broadcast Master passes at <code>29.97</code>. Values are calculated from <code>r_frame_rate</code> and rounded to two decimals.</td>
-              <td>SVOD, Broadcast Master</td>
-              <td>SVOD at 29.97 returns a warning. All other mismatches fail.</td>
+              <td><code>23.98</code> fps. The value is calculated from <code>r_frame_rate</code> and rounded to two decimals.</td>
+              <td>29.97 returns a warning. All other values fail.</td>
             </tr>
             <tr>
               <td>Chroma sampling</td>
               <td><code>pix_fmt</code> must start with <code>yuv422</code>.</td>
-              <td>SVOD, Broadcast Master</td>
               <td>Any other pixel format fails.</td>
             </tr>
             <tr>
               <td>Video scan type</td>
               <td><code>field_order</code> must be <code>progressive</code> or <code>Progressive</code>.</td>
-              <td>SVOD, Broadcast Master</td>
               <td>Interlaced or unknown scan type fails.</td>
             </tr>
             <tr>
               <td>Audio codec</td>
               <td><code>codec_name</code> must start with <code>pcm</code>.</td>
-              <td>SVOD, Broadcast Master</td>
               <td>Any non-PCM audio codec fails.</td>
             </tr>
             <tr>
               <td>Audio bit rate</td>
               <td>Expected bit rate is <code>channels * 1152</code> Kb/s. Mono is 1152 Kb/s, stereo is 2304 Kb/s.</td>
-              <td>SVOD, Broadcast Master</td>
               <td>The integer Kb/s value must match exactly. Missing or non-numeric bit rate fails.</td>
             </tr>
             <tr>
               <td>Audio sample rate</td>
               <td><code>48000</code> Hz, reported as 48 kHz.</td>
-              <td>SVOD, Broadcast Master</td>
               <td>Any other sample rate fails.</td>
             </tr>
             <tr>
               <td>Audio bit depth</td>
               <td>24-bit PCM. The script checks bit depth metadata, format tags, sample format, and PCM codec name.</td>
-              <td>SVOD, Broadcast Master</td>
               <td>Any resolved value other than <code>24</code> fails.</td>
-            </tr>
-            <tr>
-              <td>Timecode format</td>
-              <td>Timecode must exist and contain <code>;</code> or <code>,</code>, indicating drop-frame format.</td>
-              <td>Broadcast Master Phase 1 only</td>
-              <td>Missing timecode or non-drop-frame timecode fails.</td>
             </tr>
             <tr>
               <td>Video aspect / position / scale</td>
               <td>Manual review required.</td>
-              <td>SVOD, Broadcast Master</td>
               <td>No automated pass/fail is implemented.</td>
             </tr>
           </tbody>
@@ -395,14 +268,13 @@
     </section>
 
     <section>
-      <h2>Phase 2 Checks</h2>
+      <h2>SVOD Phase 2</h2>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
               <th>Field</th>
               <th>Acceptable Value or Range</th>
-              <th>Applies To</th>
               <th>Failure / Warning Behavior</th>
             </tr>
           </thead>
@@ -410,56 +282,27 @@
             <tr>
               <td>Head and tail dark frames</td>
               <td>First frame and last sampled frame must have <code>YAVG</code> less than or equal to the codec threshold: H.264/HEVC <code>45</code>, ProRes/DNxHD <code>74</code>, other codecs <code>40</code>.</td>
-              <td>SVOD Phase 2</td>
               <td>Missing head, tail, or both fails.</td>
             </tr>
             <tr>
               <td>Stereo only</td>
               <td>Exactly one audio stream and exactly two channels.</td>
-              <td>SVOD Phase 2, Broadcast Master Phase 2</td>
               <td>Any other stream count or channel count fails.</td>
             </tr>
             <tr>
               <td>Dynamic stereo</td>
               <td>For stereo layout only, the loudest L-R RMS sample from 5-second windows at 0%, 25%, 50%, and 75% of runtime must be greater than <code>-50</code> dB.</td>
-              <td>SVOD Phase 2</td>
               <td>Values less than or equal to -50 dB fail. Non-stereo layouts return N/A. Missing finite RMS returns an unable-to-test warning.</td>
             </tr>
             <tr>
               <td>Loudness</td>
               <td>Integrated loudness from FFmpeg loudnorm <code>input_i</code> must be between <code>-25</code> and <code>-22</code> LUFS, inclusive.</td>
-              <td>SVOD Phase 2, Broadcast Master Phase 2</td>
               <td>Outside this range fails. Missing/invalid loudnorm JSON returns an unable-to-test warning.</td>
             </tr>
             <tr>
               <td>Timecode start</td>
-              <td>SVOD must start at <code>00:00:00:00</code> or <code>00:00:00;00</code>. Broadcast Master must start at <code>00:58:30:00</code> or <code>00:58:30;00</code>.</td>
-              <td>SVOD Phase 2, Broadcast Master Phase 2</td>
+              <td>Must start at <code>00:00:00:00</code> or <code>00:00:00;00</code>.</td>
               <td>Missing or different start timecode fails and asks for Premiere adjustment.</td>
-            </tr>
-            <tr>
-              <td>Video markers</td>
-              <td>ExifTool marker start time, name, and duration are read and reported.</td>
-              <td>Broadcast Master Phase 2</td>
-              <td>Informational only; no pass/fail threshold is implemented.</td>
-            </tr>
-            <tr>
-              <td>Total run time</td>
-              <td>Total video frame count is converted to 29.97-style drop-frame timecode.</td>
-              <td>Broadcast Master Phase 2</td>
-              <td>Informational only; no acceptable duration range is implemented.</td>
-            </tr>
-            <tr>
-              <td>608 captions present</td>
-              <td>At least one subtitle stream codec name must contain <code>eia_608</code>.</td>
-              <td>Broadcast Master Phase 2</td>
-              <td>Missing 608 captions fail.</td>
-            </tr>
-            <tr>
-              <td>708 captions present</td>
-              <td>At least one subtitle stream codec name must contain <code>eia_708</code>.</td>
-              <td>Broadcast Master Phase 2</td>
-              <td>Missing 708 captions fail.</td>
             </tr>
           </tbody>
         </table>
@@ -467,14 +310,13 @@
     </section>
 
     <section>
-      <h2>Optional and Advanced Checks</h2>
+      <h2>SVOD Optional Checks</h2>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
               <th>Field</th>
               <th>Acceptable Value or Range</th>
-              <th>Applies To</th>
               <th>Failure / Warning Behavior</th>
             </tr>
           </thead>
@@ -482,44 +324,32 @@
             <tr>
               <td>I-frame only</td>
               <td>Every video packet must be marked as a key packet, and the first 5000 decoded frames must not include P or B frames.</td>
-              <td>SVOD, Broadcast Master</td>
               <td>Any non-I packet/frame fails.</td>
             </tr>
             <tr>
               <td>Advanced continuity</td>
               <td>FPS must be detectable; FFmpeg decode must produce no errors; frame timestamp regressions must be none; timestamp gaps must be none for a clean pass.</td>
-              <td>SVOD, Broadcast Master</td>
               <td>Decode errors or regressions fail. Gaps greater than 1.5 frame steps warn. Timestamp regression threshold is less than <code>-0.0005</code> seconds.</td>
             </tr>
             <tr>
               <td>Luma IRE</td>
-              <td>Computed IRE must stay from <code>-1</code> through <code>101</code>, inclusive. Limited-range black/white code values are 16/235 for 8-bit, 64/940 for 10-bit, and 256/3760 for 12-bit. Full-range black/white values are 0/255, 0/1023, or 0/4095.</td>
-              <td>SVOD, Broadcast Master</td>
-              <td>Below -1 IRE or above 101 IRE returns a warning, not a failure. Standard Luma samples every 24 frames. Broadcast Master starts from the first 01:00:00:00 or 01:00:00;00 point if found within the script's search window.</td>
+              <td>Computed IRE must stay from <code>-1</code> through <code>101</code>, inclusive. Standard Luma samples every 24 frames.</td>
+              <td>Below -1 IRE or above 101 IRE returns a warning, not a failure.</td>
             </tr>
             <tr>
               <td>Advanced Luma IRE</td>
               <td>Same IRE range as standard Luma, but samples every frame.</td>
-              <td>SVOD, Broadcast Master</td>
               <td>Below -1 IRE or above 101 IRE returns a warning, not a failure.</td>
             </tr>
             <tr>
               <td>True Peaks</td>
               <td>Left and right channel input true peak must each be less than or equal to <code>-2.5</code> dBTP.</td>
-              <td>SVOD, Broadcast Master</td>
-              <td>Greater than -2.5 and less than or equal to -1.5 dBTP returns a close/verify-in-Audition warning. Greater than -1.5 dBTP fails. Missing or -inf measurements return unable-to-measure.</td>
+              <td>Greater than -2.5 and less than or equal to -1.5 dBTP returns a close/verify-in-Audition warning. Greater than -1.5 dBTP fails.</td>
             </tr>
             <tr>
               <td>Advanced Chroma</td>
               <td>For limited-range media, U/Cb and V/Cr values must stay within TV-legal bounds: 8-bit <code>16-240</code>, 10-bit <code>64-960</code>, 12-bit <code>256-3840</code>.</td>
-              <td>SVOD, Broadcast Master</td>
               <td>Out-of-range Cb or Cr fails. Full-range media marked <code>pc</code> is reported as informational full-range instead of pass/fail.</td>
-            </tr>
-            <tr>
-              <td>Caption profanity</td>
-              <td>The first subtitle stream is converted to SRT and must have no matches in the configured profanity word list.</td>
-              <td>Broadcast Master</td>
-              <td>Detected terms fail and produce a Cussbuster report. If no captions are extracted, the result is a warning.</td>
             </tr>
           </tbody>
         </table>
@@ -527,34 +357,12 @@
     </section>
 
     <section>
-      <h2>Declared But Not Fully Enforced</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Declared Target</th>
-              <th>Where Declared</th>
-              <th>Current Enforcement</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>SVOD: ProRes 422 HQ, 145 Mb/s minimum, 23.98 fps, 16:9.</td>
-              <td>Test parameter block in <code>Resources/script</code>.</td>
-              <td>Matches current codec, bit rate, frame rate, and aspect checks.</td>
-            </tr>
-            <tr>
-              <td>Broadcast Master: ProRes 4444, 200 Mb/s minimum, 29.97 fps, 16:9.</td>
-              <td>Test parameter block in <code>Resources/script</code>.</td>
-              <td>Frame rate and aspect checks match. Codec and bit rate checks are currently hard-coded to ProRes 422 HQ and 145 Mb/s minimum.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <h2>Luma Code Value Reference</h2>
+      <p>Limited-range black/white code values are 16/235 for 8-bit, 64/940 for 10-bit, and 256/3760 for 12-bit. Full-range black/white values are 0/255, 0/1023, or 0/4095.</p>
     </section>
 
     <footer>
-      Generated from the TE Tool A11 source in the main branch.
+      See the <a class="back" href="specification-sheet.html">combined specification sheet</a> for Broadcast Master and implementation notes.
     </footer>
   </main>
 </body>

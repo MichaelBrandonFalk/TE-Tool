@@ -119,6 +119,12 @@
       background: var(--accent-dark);
     }
 
+    .button-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
     .details {
       display: grid;
       grid-template-columns: 1.2fr 0.8fr;
@@ -213,9 +219,12 @@
       </article>
 
       <article class="download-card">
-        <h2>Specification Sheet</h2>
-        <p class="meta">Acceptable values and ranges for each automated TE Tool A11 check, derived from the app script.</p>
-        <a class="button" href="specification-sheet.html">View Specs</a>
+        <h2>Specification Sheets</h2>
+        <p class="meta">Acceptable values and ranges for the automated TE Tool A11 checks.</p>
+        <div class="button-row">
+          <a class="button" href="specification-svod.html">SVOD Specs</a>
+          <a class="button" href="specification-broadcast.html">Broadcast Specs</a>
+        </div>
       </article>
     </section>
 
