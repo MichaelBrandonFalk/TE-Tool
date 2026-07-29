@@ -778,8 +778,22 @@ check_scan_type() {
   # --------------------
   # AUDIO INFO
   # --------------------
+
+audio_stream_missing() {
+  [[ -z "${AUDIO_STREAM:-}" ]]
+}
+
+lower_ascii() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
  
 check_audio_codec() {
+  if audio_stream_missing; then
+      AUDIO_CODEC="N/A"
+      AUDIO_CODEC_RESULT="❌ FAIL (no audio stream found)"
+      return
+  fi
+
   # Audio codec
   AUDIO_CODEC=$(echo "$AUDIO_STREAM" | grep "^codec_name=" | cut -d= -f2)
   if [[ "$AUDIO_CODEC" == pcm* ]]; then
@@ -792,6 +806,12 @@ check_audio_codec() {
 
 
 check_audio_bitrate() {
+  if audio_stream_missing; then
+      AUDIO_CHANNELS="N/A"
+      AUDIO_BIT_RATE="N/A"
+      AUDIO_BR_RESULT="❌ FAIL (no audio stream found)"
+      return
+  fi
 
   # Channels & expected bitrate
   CHANNELS=$(echo "$AUDIO_STREAM" | grep "^channels=" | cut -d= -f2)
@@ -799,8 +819,13 @@ check_audio_bitrate() {
       AUDIO_CHANNELS="Mono"; EXPECTED_ABR=1152
   elif [[ "$CHANNELS" == "2" ]]; then
       AUDIO_CHANNELS="Stereo"; EXPECTED_ABR=2304
-  else
+  elif [[ "$CHANNELS" =~ ^[0-9]+$ ]]; then
       AUDIO_CHANNELS="${CHANNELS}-Ch"; EXPECTED_ABR=$((CHANNELS*1152))
+  else
+      AUDIO_CHANNELS="N/A"
+      AUDIO_BIT_RATE="N/A"
+      AUDIO_BR_RESULT="❌ FAIL (missing channel count)"
+      return
   fi
 
   # Audio bit rate
@@ -820,18 +845,31 @@ check_audio_bitrate() {
 }
 
 check_audio_sr() {
+  if audio_stream_missing; then
+      AUDIO_SR="N/A"
+      AUDIO_SR_RESULT="❌ FAIL (no audio stream found)"
+      return
+  fi
 
   # Audio sample rate
   SR=$(echo "$AUDIO_STREAM" | grep "^sample_rate=" | cut -d= -f2)
   if [[ "$SR" == "48000" ]]; then
       AUDIO_SR="48 kHz"; AUDIO_SR_RESULT="✅ PASS"
-  else
+  elif [[ "$SR" =~ ^[0-9]+$ ]]; then
       AUDIO_SR="$((SR/1000)) kHz"; AUDIO_SR_RESULT="❌ FAIL"
+  else
+      AUDIO_SR="N/A"; AUDIO_SR_RESULT="❌ FAIL (missing sample rate)"
   fi
 }
 
 
 check_audio_bd() {
+  if audio_stream_missing; then
+      BIT_DEPTH="N/A"
+      AUDIO_BD_RESULT="❌ FAIL (no audio stream found)"
+      return
+  fi
+
   # Audio bit depth
   BIT_DEPTH=$(echo "$AUDIO_STREAM" | grep "^bit_depth=" | cut -d= -f2)
   if [[ -z "$BIT_DEPTH" || "$BIT_DEPTH" == "32" ]]; then
@@ -987,10 +1025,19 @@ check_stereo_only() {
     "$FFPROBE_BIN" -v error -select_streams a \
       -show_entries stream=index -of csv=p=0 "$FILE" \
     | wc -l | tr -d ' ' )
+  [[ "$audio_stream_count" =~ ^[0-9]+$ ]] || audio_stream_count=0
+
+  if [[ "$audio_stream_count" -eq 0 ]]; then
+    channel_layout="none"
+    STEREO_ONLY_RESULT="❌ FAIL (no audio stream found)"
+    export channel_layout
+    step_end "Phase 2 Audio"
+    return
+  fi
 
   # Fallback if channels is empty: infer from layout
   if [[ -z "$channels_val" || "$channels_val" == "N/A" ]]; then
-    case "${channel_layout,,}" in
+    case "$(lower_ascii "${channel_layout:-}")" in
       stereo) channels_val=2 ;;
       mono|mono*) channels_val=1 ;;
       *5.1*) channels_val=6 ;;
@@ -1027,7 +1074,10 @@ best_diff_db=""
 best_label=""
 best_dir_label=""
 
-if [[ "$channel_layout" != "stereo" ]]; then
+if [[ -z "${channel_layout:-}" || "$channel_layout" == "none" ]]; then
+  dbg "DEBUG: no audio layout, skipping RMS test"
+  DYNAMIC_STEREO_RESULT="❌ FAIL (no audio stream found)"
+elif [[ "$channel_layout" != "stereo" ]]; then
   dbg "DEBUG: non-stereo layout, skipping RMS test"
   DYNAMIC_STEREO_RESULT="⚠️  N A (layout: $channel_layout)"
 else
@@ -1153,6 +1203,13 @@ check_loudness () {
 ### LUFS
 ###
 step_start "Phase 2 LUFS"
+
+if audio_stream_missing; then
+  integrated_lufs="N/A"
+  LOUDNESS_RESULT="❌ FAIL (no audio stream found)"
+  step_end "Phase 2 LUFS"
+  return
+fi
 
 AUDIO_TEMP="/private/tmp/$(basename "${FILE%.*}")_decoded.wav"
 
@@ -1539,6 +1596,13 @@ check_truepeaks () {
 #################################
 step_start "Phase 2 TruePeaks"
 ts_phase=$(date +%s)
+
+if audio_stream_missing; then
+  LEFT_TP_RESULT="❌ FAIL (no audio stream found)"
+  RIGHT_TP_RESULT="❌ FAIL (no audio stream found)"
+  step_end "Phase 2 TruePeaks"
+  return
+fi
 
 # ---- temp workspace ------------------------------------------------
 TP_WD=$(mktemp -d /tmp/truepeak.XXXXXX)
@@ -2195,6 +2259,12 @@ process_file() {
   LOUDNESS_RESULT=""
   LEFT_TP_RESULT=""
   RIGHT_TP_RESULT=""
+  channel_layout=""
+  rms_lr_fmt=""
+  balance_diff_db=""
+  balance_label=""
+  balance_label_dir=""
+  integrated_lufs=""
   CHROMA_RESULT=""
 
 
@@ -2303,7 +2373,11 @@ if [[ "$PHASE2_ON" == "1" ]]; then
         echo "STEREO ONLY:           $STEREO_ONLY_RESULT"
       fi
       if [[ -n "$DYNAMIC_STEREO_RESULT" ]]; then
-        echo "DYNAMIC STEREO:        $DYNAMIC_STEREO_RESULT   (Stereo activity, L–R RMS: ${rms_lr_fmt:-N/A} dB; Loudness difference at spot‑check: ~${balance_diff_db:-N/A} dB — ${balance_label_dir:-N/A})"
+        if [[ "$DYNAMIC_STEREO_RESULT" == *"no audio stream found"* ]]; then
+          echo "DYNAMIC STEREO:        $DYNAMIC_STEREO_RESULT"
+        else
+          echo "DYNAMIC STEREO:        $DYNAMIC_STEREO_RESULT   (Stereo activity, L–R RMS: ${rms_lr_fmt:-N/A} dB; Loudness difference at spot‑check: ~${balance_diff_db:-N/A} dB — ${balance_label_dir:-N/A})"
+        fi
       fi
       if [[ -n "$LOUDNESS_RESULT" ]]; then
         echo "LOUDNESS (LUFS):       ${integrated_lufs:-N/A}        → $LOUDNESS_RESULT"

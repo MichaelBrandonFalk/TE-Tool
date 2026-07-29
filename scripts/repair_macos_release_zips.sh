@@ -38,6 +38,12 @@ repair_python_launchers() {
   done
 }
 
+overlay_current_resources() {
+  local app_path="$1"
+
+  install -m 755 "$ROOT_DIR/Resources/script" "$app_path/Contents/Resources/script"
+}
+
 set_bundle_metadata() {
   local app_path="$1"
   local plist="$app_path/Contents/Info.plist"
@@ -112,6 +118,7 @@ repair_zip() {
   xattr -cr "$stage_dir" 2>/dev/null || true
 
   repair_python_launchers "$app_path"
+  overlay_current_resources "$app_path"
   set_bundle_metadata "$app_path"
   sign_macho_resources "$app_path"
 
