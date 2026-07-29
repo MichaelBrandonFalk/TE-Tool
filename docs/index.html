@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TE Tool Downloads</title>
-  <meta name="description" content="Download TE Tool A11 for macOS Apple Silicon or macOS Intel.">
+  <meta name="description" content="Download TE Tool A11 for macOS Apple Silicon or macOS Intel, or browse older releases.">
   <style>
     :root {
       color-scheme: light;
@@ -76,7 +76,7 @@
 
     .downloads {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(235px, 1fr));
       gap: 18px;
       padding: 34px 0 26px;
     }
@@ -226,6 +226,12 @@
           <a class="button" href="specification-broadcast.html">Broadcast Specs</a>
         </div>
       </article>
+
+      <article class="download-card">
+        <h2>Older Versions</h2>
+        <p class="meta">Previous packages are kept in GitHub Releases so teams can fall back when a current build has an issue.</p>
+        <a class="button" href="https://github.com/MichaelBrandonFalk/TE-Tool/releases">View Release Archive</a>
+      </article>
     </section>
 
     <section class="wrap details" aria-label="Release details">
@@ -234,6 +240,7 @@
         <ul>
           <li>Version: A11.</li>
           <li>macOS may ask for Apple Command Line Tools; the app checks for them on launch.</li>
+          <li>Older packages can be downloaded from the release archive if a current build needs to be rolled back.</li>
           <li class="note">These builds are not notarized, so macOS may require approving the app in Privacy &amp; Security after first launch.</li>
         </ul>
       </div>
