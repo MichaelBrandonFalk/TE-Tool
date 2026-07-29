@@ -40,8 +40,11 @@ repair_python_launchers() {
 
 overlay_current_resources() {
   local app_path="$1"
+  local package_dir="$2"
 
   install -m 755 "$ROOT_DIR/Resources/script" "$app_path/Contents/Resources/script"
+  install -m 644 "$ROOT_DIR/Resources/AppIcon.icns" "$app_path/Contents/Resources/AppIcon.icns"
+  install -m 644 "$ROOT_DIR/Installation Instructions.pdf" "$package_dir/Installation Instructions.pdf"
 }
 
 set_bundle_metadata() {
@@ -118,7 +121,7 @@ repair_zip() {
   xattr -cr "$stage_dir" 2>/dev/null || true
 
   repair_python_launchers "$app_path"
-  overlay_current_resources "$app_path"
+  overlay_current_resources "$app_path" "$package_dir"
   set_bundle_metadata "$app_path"
   sign_macho_resources "$app_path"
 
