@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Usage:
-#   SOURCE_VERSION=A11 RELEASE_VERSION=A11.1 scripts/repair_macos_release_zips.sh
+#   SOURCE_VERSION=Version-11.6 RELEASE_VERSION=11.7 scripts/repair_macos_release_zips.sh
 #
 # The script intentionally expects a new RELEASE_VERSION for package changes.
 # Set ALLOW_SAME_VERSION=1 only for local diagnostics.
@@ -10,20 +10,48 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
 WORK_DIR="$DIST_DIR/repaired-release-work"
-SOURCE_VERSION="${SOURCE_VERSION:-A11}"
+SOURCE_VERSION="${SOURCE_VERSION:-Version-11.6}"
 RELEASE_VERSION="${RELEASE_VERSION:-$SOURCE_VERSION}"
 
 if [[ "${ALLOW_SAME_VERSION:-0}" != "1" && "$RELEASE_VERSION" == "$SOURCE_VERSION" ]]; then
   echo "RELEASE_VERSION must differ from SOURCE_VERSION for a published package change." >&2
-  echo "Example: SOURCE_VERSION=A11 RELEASE_VERSION=A11.1 $0" >&2
+  echo "Example: SOURCE_VERSION=Version-11.6 RELEASE_VERSION=11.7 $0" >&2
   exit 1
 fi
 
-APPLE_ZIP="$DIST_DIR/TE-Tool-${SOURCE_VERSION}-macOS-Apple-Silicon.zip"
-INTEL_ZIP="$DIST_DIR/TE-Tool-${SOURCE_VERSION}-macOS-Intel.zip"
-APPLE_OUTPUT_ZIP="$DIST_DIR/TE-Tool-${RELEASE_VERSION}-macOS-Apple-Silicon.zip"
-INTEL_OUTPUT_ZIP="$DIST_DIR/TE-Tool-${RELEASE_VERSION}-macOS-Intel.zip"
-APP_BUNDLE_NAME="TE Tool ${RELEASE_VERSION}"
+version_number() {
+  local value="$1"
+
+  value="${value#Version-}"
+  value="${value#Version }"
+  value="${value#V}"
+  value="${value#v}"
+  value="${value#A}"
+  printf '%s\n' "$value"
+}
+
+version_slug() {
+  local value="$1"
+  local numeric_version
+  numeric_version=$(version_number "$value")
+
+  case "$value" in
+    A*) printf '%s\n' "$value" ;;
+    Version-*) printf '%s\n' "$value" ;;
+    *) printf 'Version-%s\n' "$numeric_version" ;;
+  esac
+}
+
+SOURCE_DISPLAY_VERSION="${SOURCE_DISPLAY_VERSION:-$(version_number "$SOURCE_VERSION")}"
+RELEASE_DISPLAY_VERSION="${RELEASE_DISPLAY_VERSION:-$(version_number "$RELEASE_VERSION")}"
+SOURCE_ASSET_SLUG="${SOURCE_ASSET_SLUG:-$(version_slug "$SOURCE_VERSION")}"
+RELEASE_ASSET_SLUG="${RELEASE_ASSET_SLUG:-$(version_slug "$RELEASE_VERSION")}"
+
+APPLE_ZIP="$DIST_DIR/TE-Tool-${SOURCE_ASSET_SLUG}-macOS-Apple-Silicon.zip"
+INTEL_ZIP="$DIST_DIR/TE-Tool-${SOURCE_ASSET_SLUG}-macOS-Intel.zip"
+APPLE_OUTPUT_ZIP="$DIST_DIR/TE-Tool-${RELEASE_ASSET_SLUG}-macOS-Apple-Silicon.zip"
+INTEL_OUTPUT_ZIP="$DIST_DIR/TE-Tool-${RELEASE_ASSET_SLUG}-macOS-Intel.zip"
+APP_BUNDLE_NAME="TE Tool Version ${RELEASE_DISPLAY_VERSION}"
 
 set_plist_string() {
   local plist="$1"
@@ -60,15 +88,14 @@ overlay_current_resources() {
 set_bundle_metadata() {
   local app_path="$1"
   local plist="$app_path/Contents/Info.plist"
-  local version_number="${RELEASE_VERSION#A}"
 
   set_plist_string "$plist" "CFBundleName" "$APP_BUNDLE_NAME"
   set_plist_string "$plist" "CFBundleDisplayName" "$APP_BUNDLE_NAME"
   set_plist_string "$plist" "CFBundleExecutable" "$APP_BUNDLE_NAME"
   set_plist_string "$plist" "CFBundleIconFile" "AppIcon"
   set_plist_string "$plist" "CFBundleIconName" "AppIcon"
-  set_plist_string "$plist" "CFBundleShortVersionString" "$version_number"
-  set_plist_string "$plist" "CFBundleVersion" "$version_number"
+  set_plist_string "$plist" "CFBundleShortVersionString" "$RELEASE_DISPLAY_VERSION"
+  set_plist_string "$plist" "CFBundleVersion" "$RELEASE_DISPLAY_VERSION"
 }
 
 find_packaged_app() {
@@ -149,7 +176,12 @@ repair_zip() {
   mkdir -p "$stage_dir" "$extract_dir"
   ditto -x -k --noqtn --noextattr "$source_zip" "$extract_dir"
 
-  for candidate in "$source_package_folder" "${source_package_folder/TE Tool Version /TE Tool }" "$output_package_folder"; do
+  for candidate in \
+    "$source_package_folder" \
+    "${source_package_folder/TE Tool Version /TE Tool }" \
+    "${source_package_folder/Version $SOURCE_DISPLAY_VERSION/$SOURCE_VERSION}" \
+    "${source_package_folder/TE Tool Version $SOURCE_DISPLAY_VERSION/TE Tool $SOURCE_VERSION}" \
+    "$output_package_folder"; do
     if [[ -d "$extract_dir/$candidate" ]]; then
       ditto --noqtn --noextattr "$extract_dir/$candidate" "$package_dir"
       break
@@ -195,5 +227,5 @@ repair_zip() {
 }
 
 mkdir -p "$WORK_DIR"
-repair_zip "$APPLE_ZIP" "TE Tool Version ${SOURCE_VERSION} Apple Silicon" "TE Tool ${RELEASE_VERSION} Apple Silicon" "$APPLE_OUTPUT_ZIP"
-repair_zip "$INTEL_ZIP" "TE Tool Version ${SOURCE_VERSION} Intel" "TE Tool ${RELEASE_VERSION} Intel" "$INTEL_OUTPUT_ZIP"
+repair_zip "$APPLE_ZIP" "TE Tool Version ${SOURCE_DISPLAY_VERSION} Apple Silicon" "TE Tool Version ${RELEASE_DISPLAY_VERSION} Apple Silicon" "$APPLE_OUTPUT_ZIP"
+repair_zip "$INTEL_ZIP" "TE Tool Version ${SOURCE_DISPLAY_VERSION} Intel" "TE Tool Version ${RELEASE_DISPLAY_VERSION} Intel" "$INTEL_OUTPUT_ZIP"
