@@ -1,12 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Usage:
+#   SOURCE_VERSION=A11 RELEASE_VERSION=A11.1 scripts/repair_macos_release_zips.sh
+#
+# The script intentionally expects a new RELEASE_VERSION for package changes.
+# Set ALLOW_SAME_VERSION=1 only for local diagnostics.
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
-WORK_DIR="$DIST_DIR/repaired-a11-work"
+WORK_DIR="$DIST_DIR/repaired-release-work"
+SOURCE_VERSION="${SOURCE_VERSION:-A11}"
+RELEASE_VERSION="${RELEASE_VERSION:-$SOURCE_VERSION}"
 
-APPLE_ZIP="$DIST_DIR/TE-Tool-A11-macOS-Apple-Silicon.zip"
-INTEL_ZIP="$DIST_DIR/TE-Tool-A11-macOS-Intel.zip"
+if [[ "${ALLOW_SAME_VERSION:-0}" != "1" && "$RELEASE_VERSION" == "$SOURCE_VERSION" ]]; then
+  echo "RELEASE_VERSION must differ from SOURCE_VERSION for a published package change." >&2
+  echo "Example: SOURCE_VERSION=A11 RELEASE_VERSION=A11.1 $0" >&2
+  exit 1
+fi
+
+APPLE_ZIP="$DIST_DIR/TE-Tool-${SOURCE_VERSION}-macOS-Apple-Silicon.zip"
+INTEL_ZIP="$DIST_DIR/TE-Tool-${SOURCE_VERSION}-macOS-Intel.zip"
+APPLE_OUTPUT_ZIP="$DIST_DIR/TE-Tool-${RELEASE_VERSION}-macOS-Apple-Silicon.zip"
+INTEL_OUTPUT_ZIP="$DIST_DIR/TE-Tool-${RELEASE_VERSION}-macOS-Intel.zip"
 
 repair_python_launchers() {
   local app_path="$1"
@@ -44,11 +60,12 @@ sign_macho_resources() {
 
 repair_zip() {
   local source_zip="$1"
-  local package_folder="$2"
-  local stage_dir="$WORK_DIR/$package_folder"
-  local extract_dir="$WORK_DIR/extract-$package_folder"
-  local package_dir="$stage_dir/$package_folder"
-  local output_zip="$DIST_DIR/${source_zip##*/}"
+  local source_package_folder="$2"
+  local output_package_folder="$3"
+  local output_zip="$4"
+  local stage_dir="$WORK_DIR/$output_package_folder"
+  local extract_dir="$WORK_DIR/extract-$output_package_folder"
+  local package_dir="$stage_dir/$output_package_folder"
   local app_path="$package_dir/TE Tool Version 3.app"
 
   if [[ ! -f "$source_zip" ]]; then
@@ -60,8 +77,10 @@ repair_zip() {
   mkdir -p "$stage_dir" "$extract_dir"
   ditto -x -k --noqtn --noextattr "$source_zip" "$extract_dir"
 
-  if [[ -d "$extract_dir/$package_folder" ]]; then
-    ditto --noqtn --noextattr "$extract_dir/$package_folder" "$package_dir"
+  if [[ -d "$extract_dir/$source_package_folder" ]]; then
+    ditto --noqtn --noextattr "$extract_dir/$source_package_folder" "$package_dir"
+  elif [[ -d "$extract_dir/$output_package_folder" ]]; then
+    ditto --noqtn --noextattr "$extract_dir/$output_package_folder" "$package_dir"
   elif [[ -d "$extract_dir/TE Tool Version 3.app" ]]; then
     mkdir -p "$package_dir"
     ditto --noqtn --noextattr "$extract_dir" "$package_dir"
@@ -90,12 +109,12 @@ repair_zip() {
   rm -f "$output_zip"
   (
     cd "$stage_dir"
-    ditto -c -k --keepParent --norsrc --noextattr --noqtn --zlibCompressionLevel 9 "$package_folder" "$output_zip"
+    ditto -c -k --keepParent --norsrc --noextattr --noqtn --zlibCompressionLevel 9 "$output_package_folder" "$output_zip"
   )
 
   shasum -a 256 "$output_zip"
 }
 
 mkdir -p "$WORK_DIR"
-repair_zip "$APPLE_ZIP" "TE Tool Version A11 Apple Silicon"
-repair_zip "$INTEL_ZIP" "TE Tool Version A11 Intel"
+repair_zip "$APPLE_ZIP" "TE Tool Version ${SOURCE_VERSION} Apple Silicon" "TE Tool Version ${RELEASE_VERSION} Apple Silicon" "$APPLE_OUTPUT_ZIP"
+repair_zip "$INTEL_ZIP" "TE Tool Version ${SOURCE_VERSION} Intel" "TE Tool Version ${RELEASE_VERSION} Intel" "$INTEL_OUTPUT_ZIP"
