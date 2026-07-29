@@ -38,6 +38,21 @@ repair_python_launchers() {
   done
 }
 
+set_bundle_metadata() {
+  local app_path="$1"
+  local plist="$app_path/Contents/Info.plist"
+  local version_number="${RELEASE_VERSION#A}"
+
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AppIcon" "$plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIconName AppIcon" "$plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version_number" "$plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $version_number" "$plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $version_number" "$plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $version_number" "$plist"
+}
+
 sign_macho_resources() {
   local app_path="$1"
 
@@ -97,6 +112,7 @@ repair_zip() {
   xattr -cr "$stage_dir" 2>/dev/null || true
 
   repair_python_launchers "$app_path"
+  set_bundle_metadata "$app_path"
   sign_macho_resources "$app_path"
 
   if [[ -d "$app_path/Contents/Resources/Dialog.app" ]]; then
