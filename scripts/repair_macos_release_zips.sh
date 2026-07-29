@@ -23,6 +23,16 @@ APPLE_ZIP="$DIST_DIR/TE-Tool-${SOURCE_VERSION}-macOS-Apple-Silicon.zip"
 INTEL_ZIP="$DIST_DIR/TE-Tool-${SOURCE_VERSION}-macOS-Intel.zip"
 APPLE_OUTPUT_ZIP="$DIST_DIR/TE-Tool-${RELEASE_VERSION}-macOS-Apple-Silicon.zip"
 INTEL_OUTPUT_ZIP="$DIST_DIR/TE-Tool-${RELEASE_VERSION}-macOS-Intel.zip"
+APP_BUNDLE_NAME="TE Tool ${RELEASE_VERSION}"
+
+set_plist_string() {
+  local plist="$1"
+  local key="$2"
+  local value="$3"
+
+  /usr/libexec/PlistBuddy -c "Set :$key $value" "$plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :$key string $value" "$plist"
+}
 
 repair_python_launchers() {
   local app_path="$1"
@@ -52,14 +62,52 @@ set_bundle_metadata() {
   local plist="$app_path/Contents/Info.plist"
   local version_number="${RELEASE_VERSION#A}"
 
-  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AppIcon" "$plist" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$plist"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleIconName AppIcon" "$plist" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$plist"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version_number" "$plist" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $version_number" "$plist"
-  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $version_number" "$plist" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $version_number" "$plist"
+  set_plist_string "$plist" "CFBundleName" "$APP_BUNDLE_NAME"
+  set_plist_string "$plist" "CFBundleDisplayName" "$APP_BUNDLE_NAME"
+  set_plist_string "$plist" "CFBundleExecutable" "$APP_BUNDLE_NAME"
+  set_plist_string "$plist" "CFBundleIconFile" "AppIcon"
+  set_plist_string "$plist" "CFBundleIconName" "AppIcon"
+  set_plist_string "$plist" "CFBundleShortVersionString" "$version_number"
+  set_plist_string "$plist" "CFBundleVersion" "$version_number"
+}
+
+find_packaged_app() {
+  local package_dir="$1"
+
+  [[ -d "$package_dir" ]] || return 0
+  find "$package_dir" -maxdepth 1 -name "*.app" -type d -print -quit
+}
+
+rename_app_bundle() {
+  local package_dir="$1"
+  local app_path="$2"
+  local target_app_path="$package_dir/${APP_BUNDLE_NAME}.app"
+
+  if [[ "$app_path" != "$target_app_path" ]]; then
+    mv "$app_path" "$target_app_path"
+  fi
+
+  printf '%s\n' "$target_app_path"
+}
+
+rename_main_executable() {
+  local app_path="$1"
+  local plist="$app_path/Contents/Info.plist"
+  local macos_dir="$app_path/Contents/MacOS"
+  local current_executable
+  current_executable=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$plist" 2>/dev/null || true)
+
+  if [[ -n "$current_executable" && -f "$macos_dir/$current_executable" && "$current_executable" != "$APP_BUNDLE_NAME" ]]; then
+    mv "$macos_dir/$current_executable" "$macos_dir/$APP_BUNDLE_NAME"
+  elif [[ ! -f "$macos_dir/$APP_BUNDLE_NAME" ]]; then
+    local only_executable
+    only_executable=$(find "$macos_dir" -maxdepth 1 -type f -perm -111 -print -quit)
+    if [[ -n "$only_executable" ]]; then
+      mv "$only_executable" "$macos_dir/$APP_BUNDLE_NAME"
+    fi
+  fi
+
+  chmod 755 "$macos_dir/$APP_BUNDLE_NAME"
 }
 
 sign_macho_resources() {
@@ -90,7 +138,7 @@ repair_zip() {
   local stage_dir="$WORK_DIR/$output_package_folder"
   local extract_dir="$WORK_DIR/extract-$output_package_folder"
   local package_dir="$stage_dir/$output_package_folder"
-  local app_path="$package_dir/TE Tool Version 3.app"
+  local app_path=""
 
   if [[ ! -f "$source_zip" ]]; then
     echo "Missing source zip: $source_zip" >&2
@@ -101,20 +149,24 @@ repair_zip() {
   mkdir -p "$stage_dir" "$extract_dir"
   ditto -x -k --noqtn --noextattr "$source_zip" "$extract_dir"
 
-  if [[ -d "$extract_dir/$source_package_folder" ]]; then
-    ditto --noqtn --noextattr "$extract_dir/$source_package_folder" "$package_dir"
-  elif [[ -d "$extract_dir/$output_package_folder" ]]; then
-    ditto --noqtn --noextattr "$extract_dir/$output_package_folder" "$package_dir"
-  elif [[ -d "$extract_dir/TE Tool Version 3.app" ]]; then
+  for candidate in "$source_package_folder" "${source_package_folder/TE Tool Version /TE Tool }" "$output_package_folder"; do
+    if [[ -d "$extract_dir/$candidate" ]]; then
+      ditto --noqtn --noextattr "$extract_dir/$candidate" "$package_dir"
+      break
+    fi
+  done
+  if [[ ! -d "$package_dir" || -z "$(find_packaged_app "$package_dir")" ]]; then
     mkdir -p "$package_dir"
     ditto --noqtn --noextattr "$extract_dir" "$package_dir"
   fi
 
-  if [[ ! -d "$app_path" ]]; then
+  app_path=$(find_packaged_app "$package_dir")
+  if [[ -z "$app_path" || ! -d "$app_path" ]]; then
     echo "Missing app bundle in $source_zip" >&2
     exit 1
   fi
 
+  app_path=$(rename_app_bundle "$package_dir" "$app_path")
   chmod -R u+rwX "$stage_dir"
   find "$app_path" -maxdepth 1 -type f -delete
   find "$stage_dir" -name ".DS_Store" -type f -delete
@@ -122,6 +174,7 @@ repair_zip() {
 
   repair_python_launchers "$app_path"
   overlay_current_resources "$app_path" "$package_dir"
+  rename_main_executable "$app_path"
   set_bundle_metadata "$app_path"
   sign_macho_resources "$app_path"
 
@@ -142,5 +195,5 @@ repair_zip() {
 }
 
 mkdir -p "$WORK_DIR"
-repair_zip "$APPLE_ZIP" "TE Tool Version ${SOURCE_VERSION} Apple Silicon" "TE Tool Version ${RELEASE_VERSION} Apple Silicon" "$APPLE_OUTPUT_ZIP"
-repair_zip "$INTEL_ZIP" "TE Tool Version ${SOURCE_VERSION} Intel" "TE Tool Version ${RELEASE_VERSION} Intel" "$INTEL_OUTPUT_ZIP"
+repair_zip "$APPLE_ZIP" "TE Tool Version ${SOURCE_VERSION} Apple Silicon" "TE Tool ${RELEASE_VERSION} Apple Silicon" "$APPLE_OUTPUT_ZIP"
+repair_zip "$INTEL_ZIP" "TE Tool Version ${SOURCE_VERSION} Intel" "TE Tool ${RELEASE_VERSION} Intel" "$INTEL_OUTPUT_ZIP"
