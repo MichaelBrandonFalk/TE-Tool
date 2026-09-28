@@ -175,7 +175,7 @@
           <tbody>
             <tr>
               <td>Phase 1</td>
-              <td>File type, video bit rate, video codec, resolution, aspect ratio, frame rate, chroma sampling, scan type, audio codec, audio bit rate, audio sample rate, audio bit depth.</td>
+              <td>File type, video bit rate, video codec, resolution, aspect ratio, frame rate, chroma sampling, scan type, video and audio language metadata, audio codec, audio bit rate, audio sample rate, audio bit depth.</td>
             </tr>
             <tr>
               <td>Phase 2</td>
@@ -241,6 +241,11 @@
               <td>Video scan type</td>
               <td><code>field_order</code> must be <code>progressive</code> or <code>Progressive</code>.</td>
               <td>Interlaced or unknown scan type fails.</td>
+            </tr>
+            <tr>
+              <td>Video and audio language metadata</td>
+              <td>Reports the <code>language</code> metadata tag for every video and audio stream. Streams without a language tag are reported as <code>not tagged</code>.</td>
+              <td>Informational and passes automatically; missing or unspecified language tags do not fail the file.</td>
             </tr>
             <tr>
               <td>Audio codec</td>

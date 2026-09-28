@@ -80,7 +80,7 @@ get_checks_for_group() {
   local group="$2"
   case "${testtype}:${group}" in
     "SVOD:PHASE1")
-      echo "check_file_type check_video_bitrate check_video_codec check_resolution check_aspect_ratio check_frame_rate check_chroma check_scan_type check_audio_codec check_audio_bitrate check_audio_sr check_audio_bd"
+      echo "check_file_type check_video_bitrate check_video_codec check_resolution check_aspect_ratio check_frame_rate check_chroma check_scan_type check_language_metadata check_audio_codec check_audio_bitrate check_audio_sr check_audio_bd"
       ;;
     "SVOD:PHASE2")
       echo "check_dark_frame check_stereo_only check_dynamic_stereo check_loudness check_timecode"
@@ -104,7 +104,7 @@ get_checks_for_group() {
       echo "check_continuity"
       ;;
     "Broadcast Master:PHASE1")
-      echo "check_file_type check_video_bitrate check_video_codec check_resolution check_aspect_ratio check_frame_rate check_chroma check_scan_type check_audio_codec check_audio_bitrate check_audio_sr check_audio_bd check_timecode_format"
+      echo "check_file_type check_video_bitrate check_video_codec check_resolution check_aspect_ratio check_frame_rate check_chroma check_scan_type check_language_metadata check_audio_codec check_audio_bitrate check_audio_sr check_audio_bd check_timecode_format"
       ;;
     "Broadcast Master:PHASE2")
       echo "check_stereo_only check_loudness check_timecode check_video_segment_times check_total_run_time check_has_608_cc check_has_708_cc"
@@ -785,6 +785,49 @@ audio_stream_missing() {
 
 lower_ascii() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+check_language_metadata() {
+  local language_rows line index codec_type language field
+  local -a fields
+
+  VIDEO_LANGUAGE_TAGS=""
+  AUDIO_LANGUAGE_TAGS=""
+  language_rows=$("$FFPROBE_BIN" -v error \
+      -show_entries stream=index,codec_type:stream_tags=language \
+      -of compact=p=0:nk=0 "$FILE" 2>/dev/null || true)
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    index=""
+    codec_type=""
+    language=""
+    IFS='|' read -r -a fields <<< "$line"
+
+    for field in "${fields[@]}"; do
+      case "$field" in
+        index=*) index="${field#index=}" ;;
+        codec_type=*) codec_type="${field#codec_type=}" ;;
+        tag:language=*) language="${field#tag:language=}" ;;
+      esac
+    done
+
+    [[ "$codec_type" == "video" || "$codec_type" == "audio" ]] || continue
+    [[ -n "$language" ]] || language="not tagged"
+    [[ -n "$index" ]] || index="?"
+
+    if [[ "$codec_type" == "video" ]]; then
+      [[ -z "$VIDEO_LANGUAGE_TAGS" ]] || VIDEO_LANGUAGE_TAGS+="; "
+      VIDEO_LANGUAGE_TAGS+="stream $index: $language"
+    else
+      [[ -z "$AUDIO_LANGUAGE_TAGS" ]] || AUDIO_LANGUAGE_TAGS+="; "
+      AUDIO_LANGUAGE_TAGS+="stream $index: $language"
+    fi
+  done <<< "$language_rows"
+
+  [[ -n "$VIDEO_LANGUAGE_TAGS" ]] || VIDEO_LANGUAGE_TAGS="no video streams"
+  [[ -n "$AUDIO_LANGUAGE_TAGS" ]] || AUDIO_LANGUAGE_TAGS="no audio streams"
+  LANGUAGE_METADATA_RESULT="✅ PASS (informational)"
 }
  
 check_audio_codec() {
@@ -2247,6 +2290,9 @@ process_file() {
   AUDIO_BR_RESULT=""
   AUDIO_SR_RESULT=""
   AUDIO_BD_RESULT=""
+  LANGUAGE_METADATA_RESULT=""
+  VIDEO_LANGUAGE_TAGS=""
+  AUDIO_LANGUAGE_TAGS=""
   FRAME_TYPE_RESULT=""
   FRAME_TYPE_MSG=""
   DARK_FRAME_RESULT=""
@@ -2326,6 +2372,8 @@ if [[ "$PHASE1_ON" == "1" ]]; then
   echo "FRAME RATE:            ${FRAME_RATE:-–} ${FRAME_RATE_RESULT:+– $FRAME_RATE_RESULT}"
   echo "CHROMA SAMPLING:       ${CHROMA:-–} ${CHROMA_RESULT:+– $CHROMA_RESULT}"
   echo "VIDEO SCAN TYPE:       ${SCAN_TYPE:-–} ${SCAN_RESULT:+– $SCAN_RESULT}"
+  echo "VIDEO LANGUAGE TAGS:   ${VIDEO_LANGUAGE_TAGS:-–} ${LANGUAGE_METADATA_RESULT:+– $LANGUAGE_METADATA_RESULT}"
+  echo "AUDIO LANGUAGE TAGS:   ${AUDIO_LANGUAGE_TAGS:-–} ${LANGUAGE_METADATA_RESULT:+– $LANGUAGE_METADATA_RESULT}"
   echo "AUDIO CODEC:           ${AUDIO_CODEC:-–} ${AUDIO_CODEC_RESULT:+– $AUDIO_CODEC_RESULT}"
   echo "AUDIO CHANNELS:        ${AUDIO_CHANNELS:-–}"
   echo "AUDIO BIT RATE:        ${AUDIO_BIT_RATE:-–} ${AUDIO_BR_RESULT:+– $AUDIO_BR_RESULT}"
