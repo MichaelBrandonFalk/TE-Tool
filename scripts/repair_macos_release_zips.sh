@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Usage:
-#   SOURCE_VERSION=Version-11.8 RELEASE_VERSION=11.9 scripts/repair_macos_release_zips.sh
+#   SOURCE_VERSION=Version-11.9 RELEASE_VERSION=11.10 scripts/repair_macos_release_zips.sh
 #
 # The script intentionally expects a new RELEASE_VERSION for package changes.
 # Set ALLOW_SAME_VERSION=1 only for local diagnostics.
@@ -10,7 +10,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
 WORK_DIR="$DIST_DIR/repaired-release-work"
-SOURCE_VERSION="${SOURCE_VERSION:-Version-11.8}"
+SOURCE_VERSION="${SOURCE_VERSION:-Version-11.9}"
 RELEASE_VERSION="${RELEASE_VERSION:-$SOURCE_VERSION}"
 
 ARM64_FFMPEG_URL="https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip"
@@ -23,7 +23,7 @@ ARM64_TOOLS_DIR="$WORK_DIR/dependencies/arm64"
 
 if [[ "${ALLOW_SAME_VERSION:-0}" != "1" && "$RELEASE_VERSION" == "$SOURCE_VERSION" ]]; then
   echo "RELEASE_VERSION must differ from SOURCE_VERSION for a published package change." >&2
-  echo "Example: SOURCE_VERSION=Version-11.8 RELEASE_VERSION=11.9 $0" >&2
+  echo "Example: SOURCE_VERSION=Version-11.9 RELEASE_VERSION=11.10 $0" >&2
   exit 1
 fi
 
@@ -56,9 +56,7 @@ SOURCE_ASSET_SLUG="${SOURCE_ASSET_SLUG:-$(version_slug "$SOURCE_VERSION")}"
 RELEASE_ASSET_SLUG="${RELEASE_ASSET_SLUG:-$(version_slug "$RELEASE_VERSION")}"
 
 APPLE_ZIP="$DIST_DIR/TE-Tool-${SOURCE_ASSET_SLUG}-macOS-Apple-Silicon.zip"
-INTEL_ZIP="$DIST_DIR/TE-Tool-${SOURCE_ASSET_SLUG}-macOS-Intel.zip"
 APPLE_OUTPUT_ZIP="$DIST_DIR/TE-Tool-${RELEASE_ASSET_SLUG}-macOS-Apple-Silicon.zip"
-INTEL_OUTPUT_ZIP="$DIST_DIR/TE-Tool-${RELEASE_ASSET_SLUG}-macOS-Intel.zip"
 APP_BUNDLE_NAME="TE Tool Version ${RELEASE_DISPLAY_VERSION}"
 
 set_plist_string() {
@@ -140,26 +138,18 @@ verify_binary_architecture() {
 overlay_current_resources() {
   local app_path="$1"
   local package_dir="$2"
-  local target_arch="$3"
 
   install -m 755 "$ROOT_DIR/Resources/script" "$app_path/Contents/Resources/script"
   install -m 755 "$ROOT_DIR/Resources/metadata_helpers.sh" "$app_path/Contents/Resources/metadata_helpers.sh"
   install -m 644 "$ROOT_DIR/Resources/AppIcon.icns" "$app_path/Contents/Resources/AppIcon.icns"
   install -m 644 "$ROOT_DIR/Installation Instructions.pdf" "$package_dir/Installation Instructions.pdf"
+  install -m 755 "$ARM64_TOOLS_DIR/ffmpeg" "$app_path/Contents/Resources/ffmpeg"
+  install -m 755 "$ARM64_TOOLS_DIR/ffprobe" "$app_path/Contents/Resources/ffprobe"
+  install -m 755 "$ARM64_TOOLS_DIR/jq" "$app_path/Contents/Resources/jq"
 
-  if [[ "$target_arch" == "arm64" ]]; then
-    install -m 755 "$ARM64_TOOLS_DIR/ffmpeg" "$app_path/Contents/Resources/ffmpeg"
-    install -m 755 "$ARM64_TOOLS_DIR/ffprobe" "$app_path/Contents/Resources/ffprobe"
-    install -m 755 "$ARM64_TOOLS_DIR/jq" "$app_path/Contents/Resources/jq"
-  else
-    install -m 755 "$ROOT_DIR/Resources/ffmpeg" "$app_path/Contents/Resources/ffmpeg"
-    install -m 755 "$ROOT_DIR/Resources/ffprobe" "$app_path/Contents/Resources/ffprobe"
-    install -m 755 "$ROOT_DIR/Resources/jq" "$app_path/Contents/Resources/jq"
-  fi
-
-  verify_binary_architecture "$app_path/Contents/Resources/ffmpeg" "$target_arch"
-  verify_binary_architecture "$app_path/Contents/Resources/ffprobe" "$target_arch"
-  verify_binary_architecture "$app_path/Contents/Resources/jq" "$target_arch"
+  verify_binary_architecture "$app_path/Contents/Resources/ffmpeg" "arm64"
+  verify_binary_architecture "$app_path/Contents/Resources/ffprobe" "arm64"
+  verify_binary_architecture "$app_path/Contents/Resources/jq" "arm64"
 }
 
 set_bundle_metadata() {
@@ -239,7 +229,6 @@ repair_zip() {
   local source_package_folder="$2"
   local output_package_folder="$3"
   local output_zip="$4"
-  local target_arch="$5"
   local stage_dir="$WORK_DIR/$output_package_folder"
   local extract_dir="$WORK_DIR/extract-$output_package_folder"
   local package_dir="$stage_dir/$output_package_folder"
@@ -283,7 +272,7 @@ repair_zip() {
   xattr -cr "$stage_dir" 2>/dev/null || true
 
   repair_python_launchers "$app_path"
-  overlay_current_resources "$app_path" "$package_dir" "$target_arch"
+  overlay_current_resources "$app_path" "$package_dir"
   rename_main_executable "$app_path"
   set_bundle_metadata "$app_path"
   sign_macho_resources "$app_path"
@@ -306,5 +295,4 @@ repair_zip() {
 
 mkdir -p "$WORK_DIR"
 prepare_arm64_tools
-repair_zip "$APPLE_ZIP" "TE Tool Version ${SOURCE_DISPLAY_VERSION} Apple Silicon" "TE Tool Version ${RELEASE_DISPLAY_VERSION} Apple Silicon" "$APPLE_OUTPUT_ZIP" "arm64"
-repair_zip "$INTEL_ZIP" "TE Tool Version ${SOURCE_DISPLAY_VERSION} Intel" "TE Tool Version ${RELEASE_DISPLAY_VERSION} Intel" "$INTEL_OUTPUT_ZIP" "x86_64"
+repair_zip "$APPLE_ZIP" "TE Tool Version ${SOURCE_DISPLAY_VERSION} Apple Silicon" "TE Tool Version ${RELEASE_DISPLAY_VERSION} Apple Silicon" "$APPLE_OUTPUT_ZIP"
