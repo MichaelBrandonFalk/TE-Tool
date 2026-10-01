@@ -1,0 +1,71 @@
+{
+  "streams": [
+    {
+      "index": 0,
+      "codec_name": "prores",
+      "codec_type": "video",
+      "codec_tag_string": "apch",
+      "width": 1920,
+      "height": 1080,
+      "display_aspect_ratio": "16:9",
+      "pix_fmt": "yuv422p10le",
+      "field_order": "progressive",
+      "r_frame_rate": "30000/1001",
+      "avg_frame_rate": "30000/1001",
+      "bit_rate": "193000000",
+      "tags": {
+        "language": "eng"
+      }
+    },
+    {
+      "index": 1,
+      "codec_name": "pcm_s24le",
+      "codec_type": "audio",
+      "sample_fmt": "s32",
+      "sample_rate": "48000",
+      "channels": 2,
+      "channel_layout": "stereo",
+      "bits_per_sample": 24,
+      "bits_per_raw_sample": "24",
+      "bit_rate": "2304000",
+      "tags": {
+        "language": "spa"
+      }
+    },
+    {
+      "index": 2,
+      "codec_type": "data",
+      "codec_tag_string": "tmcd",
+      "tags": {
+        "language": "eng",
+        "timecode": "00:00:00:00"
+      }
+    }
+  ],
+  "stream_groups": [
+    {
+      "index": 0,
+      "streams": [
+        {
+          "index": 0,
+          "codec_type": "video",
+          "codec_tag_string": "apch",
+          "width": 1920,
+          "height": 1080,
+          "r_frame_rate": "30000/1001",
+          "bit_rate": "193000000"
+        },
+        {
+          "index": 1,
+          "codec_type": "audio",
+          "channels": 2,
+          "bit_rate": "2304000"
+        }
+      ]
+    }
+  ],
+  "format": {
+    "duration": "1874.840000",
+    "bit_rate": "195304000"
+  }
+}

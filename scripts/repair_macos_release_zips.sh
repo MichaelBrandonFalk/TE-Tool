@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Usage:
-#   SOURCE_VERSION=Version-11.7 RELEASE_VERSION=11.8 scripts/repair_macos_release_zips.sh
+#   SOURCE_VERSION=Version-11.8 RELEASE_VERSION=11.9 scripts/repair_macos_release_zips.sh
 #
 # The script intentionally expects a new RELEASE_VERSION for package changes.
 # Set ALLOW_SAME_VERSION=1 only for local diagnostics.
@@ -10,7 +10,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
 WORK_DIR="$DIST_DIR/repaired-release-work"
-SOURCE_VERSION="${SOURCE_VERSION:-Version-11.7}"
+SOURCE_VERSION="${SOURCE_VERSION:-Version-11.8}"
 RELEASE_VERSION="${RELEASE_VERSION:-$SOURCE_VERSION}"
 
 ARM64_FFMPEG_URL="https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip"
@@ -23,7 +23,7 @@ ARM64_TOOLS_DIR="$WORK_DIR/dependencies/arm64"
 
 if [[ "${ALLOW_SAME_VERSION:-0}" != "1" && "$RELEASE_VERSION" == "$SOURCE_VERSION" ]]; then
   echo "RELEASE_VERSION must differ from SOURCE_VERSION for a published package change." >&2
-  echo "Example: SOURCE_VERSION=Version-11.7 RELEASE_VERSION=11.8 $0" >&2
+  echo "Example: SOURCE_VERSION=Version-11.8 RELEASE_VERSION=11.9 $0" >&2
   exit 1
 fi
 
@@ -143,6 +143,7 @@ overlay_current_resources() {
   local target_arch="$3"
 
   install -m 755 "$ROOT_DIR/Resources/script" "$app_path/Contents/Resources/script"
+  install -m 755 "$ROOT_DIR/Resources/metadata_helpers.sh" "$app_path/Contents/Resources/metadata_helpers.sh"
   install -m 644 "$ROOT_DIR/Resources/AppIcon.icns" "$app_path/Contents/Resources/AppIcon.icns"
   install -m 644 "$ROOT_DIR/Installation Instructions.pdf" "$package_dir/Installation Instructions.pdf"
 
