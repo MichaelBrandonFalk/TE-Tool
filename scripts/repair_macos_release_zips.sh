@@ -13,6 +13,14 @@ WORK_DIR="$DIST_DIR/repaired-release-work"
 SOURCE_VERSION="${SOURCE_VERSION:-Version-11.7}"
 RELEASE_VERSION="${RELEASE_VERSION:-$SOURCE_VERSION}"
 
+ARM64_FFMPEG_URL="https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip"
+ARM64_FFMPEG_SHA256="c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924"
+ARM64_FFPROBE_URL="https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip"
+ARM64_FFPROBE_SHA256="fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6"
+ARM64_JQ_URL="https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-macos-arm64"
+ARM64_JQ_SHA256="a9fe3ea2f86dfc72f6728417521ec9067b343277152b114f4e98d8cb0e263603"
+ARM64_TOOLS_DIR="$WORK_DIR/dependencies/arm64"
+
 if [[ "${ALLOW_SAME_VERSION:-0}" != "1" && "$RELEASE_VERSION" == "$SOURCE_VERSION" ]]; then
   echo "RELEASE_VERSION must differ from SOURCE_VERSION for a published package change." >&2
   echo "Example: SOURCE_VERSION=Version-11.7 RELEASE_VERSION=11.8 $0" >&2
@@ -76,13 +84,81 @@ repair_python_launchers() {
   done
 }
 
+sha256_matches() {
+  local file_path="$1"
+  local expected_sha="$2"
+  local actual_sha
+
+  [[ -f "$file_path" ]] || return 1
+  actual_sha=$(shasum -a 256 "$file_path" | awk '{print $1}')
+  [[ "$actual_sha" == "$expected_sha" ]]
+}
+
+download_verified_file() {
+  local url="$1"
+  local expected_sha="$2"
+  local output_path="$3"
+
+  if ! sha256_matches "$output_path" "$expected_sha"; then
+    rm -f "$output_path"
+    curl --fail --location --silent --show-error "$url" --output "$output_path"
+  fi
+
+  if ! sha256_matches "$output_path" "$expected_sha"; then
+    echo "Checksum verification failed for $output_path" >&2
+    exit 1
+  fi
+}
+
+prepare_arm64_tools() {
+  local ffmpeg_zip="$ARM64_TOOLS_DIR/ffmpeg.zip"
+  local ffprobe_zip="$ARM64_TOOLS_DIR/ffprobe.zip"
+
+  mkdir -p "$ARM64_TOOLS_DIR"
+  download_verified_file "$ARM64_FFMPEG_URL" "$ARM64_FFMPEG_SHA256" "$ffmpeg_zip"
+  download_verified_file "$ARM64_FFPROBE_URL" "$ARM64_FFPROBE_SHA256" "$ffprobe_zip"
+  download_verified_file "$ARM64_JQ_URL" "$ARM64_JQ_SHA256" "$ARM64_TOOLS_DIR/jq"
+
+  rm -f "$ARM64_TOOLS_DIR/ffmpeg" "$ARM64_TOOLS_DIR/ffprobe"
+  ditto -x -k --noqtn --noextattr "$ffmpeg_zip" "$ARM64_TOOLS_DIR"
+  ditto -x -k --noqtn --noextattr "$ffprobe_zip" "$ARM64_TOOLS_DIR"
+  chmod 755 "$ARM64_TOOLS_DIR/ffmpeg" "$ARM64_TOOLS_DIR/ffprobe" "$ARM64_TOOLS_DIR/jq"
+}
+
+verify_binary_architecture() {
+  local binary_path="$1"
+  local expected_arch="$2"
+  local binary_arches
+
+  binary_arches=$(lipo -archs "$binary_path" 2>/dev/null || true)
+  if [[ " $binary_arches " != *" $expected_arch "* ]]; then
+    echo "Architecture check failed: $binary_path is [$binary_arches], expected $expected_arch." >&2
+    exit 1
+  fi
+}
+
 overlay_current_resources() {
   local app_path="$1"
   local package_dir="$2"
+  local target_arch="$3"
 
   install -m 755 "$ROOT_DIR/Resources/script" "$app_path/Contents/Resources/script"
   install -m 644 "$ROOT_DIR/Resources/AppIcon.icns" "$app_path/Contents/Resources/AppIcon.icns"
   install -m 644 "$ROOT_DIR/Installation Instructions.pdf" "$package_dir/Installation Instructions.pdf"
+
+  if [[ "$target_arch" == "arm64" ]]; then
+    install -m 755 "$ARM64_TOOLS_DIR/ffmpeg" "$app_path/Contents/Resources/ffmpeg"
+    install -m 755 "$ARM64_TOOLS_DIR/ffprobe" "$app_path/Contents/Resources/ffprobe"
+    install -m 755 "$ARM64_TOOLS_DIR/jq" "$app_path/Contents/Resources/jq"
+  else
+    install -m 755 "$ROOT_DIR/Resources/ffmpeg" "$app_path/Contents/Resources/ffmpeg"
+    install -m 755 "$ROOT_DIR/Resources/ffprobe" "$app_path/Contents/Resources/ffprobe"
+    install -m 755 "$ROOT_DIR/Resources/jq" "$app_path/Contents/Resources/jq"
+  fi
+
+  verify_binary_architecture "$app_path/Contents/Resources/ffmpeg" "$target_arch"
+  verify_binary_architecture "$app_path/Contents/Resources/ffprobe" "$target_arch"
+  verify_binary_architecture "$app_path/Contents/Resources/jq" "$target_arch"
 }
 
 set_bundle_metadata() {
@@ -162,6 +238,7 @@ repair_zip() {
   local source_package_folder="$2"
   local output_package_folder="$3"
   local output_zip="$4"
+  local target_arch="$5"
   local stage_dir="$WORK_DIR/$output_package_folder"
   local extract_dir="$WORK_DIR/extract-$output_package_folder"
   local package_dir="$stage_dir/$output_package_folder"
@@ -205,7 +282,7 @@ repair_zip() {
   xattr -cr "$stage_dir" 2>/dev/null || true
 
   repair_python_launchers "$app_path"
-  overlay_current_resources "$app_path" "$package_dir"
+  overlay_current_resources "$app_path" "$package_dir" "$target_arch"
   rename_main_executable "$app_path"
   set_bundle_metadata "$app_path"
   sign_macho_resources "$app_path"
@@ -227,5 +304,6 @@ repair_zip() {
 }
 
 mkdir -p "$WORK_DIR"
-repair_zip "$APPLE_ZIP" "TE Tool Version ${SOURCE_DISPLAY_VERSION} Apple Silicon" "TE Tool Version ${RELEASE_DISPLAY_VERSION} Apple Silicon" "$APPLE_OUTPUT_ZIP"
-repair_zip "$INTEL_ZIP" "TE Tool Version ${SOURCE_DISPLAY_VERSION} Intel" "TE Tool Version ${RELEASE_DISPLAY_VERSION} Intel" "$INTEL_OUTPUT_ZIP"
+prepare_arm64_tools
+repair_zip "$APPLE_ZIP" "TE Tool Version ${SOURCE_DISPLAY_VERSION} Apple Silicon" "TE Tool Version ${RELEASE_DISPLAY_VERSION} Apple Silicon" "$APPLE_OUTPUT_ZIP" "arm64"
+repair_zip "$INTEL_ZIP" "TE Tool Version ${SOURCE_DISPLAY_VERSION} Intel" "TE Tool Version ${RELEASE_DISPLAY_VERSION} Intel" "$INTEL_OUTPUT_ZIP" "x86_64"
