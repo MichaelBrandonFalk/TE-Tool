@@ -1,8 +1,9 @@
-
 #!/bin/bash
 # shellcheck shell=bash
 
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+TE_TMP_DIR="${TE_TMP_DIR:-${TMPDIR:-/tmp}}"
+mkdir -p "$TE_TMP_DIR"
 FILES=("$@")
 if [[ $# -eq 0 ]]; then
   echo "No files provided. Please drag and drop media files onto the app."
@@ -10,9 +11,8 @@ if [[ $# -eq 0 ]]; then
 fi
 
 
-# --- Preflight: ensure Apple Command Line Tools (for /usr/bin/swift) ---
-need_swift_dialogs=1
-if [[ "$need_swift_dialogs" == 1 ]]; then
+# --- macOS interactive preflight (cross-platform launchers are noninteractive) ---
+if [[ "${TE_NONINTERACTIVE:-0}" != "1" && "$(uname -s)" == "Darwin" ]]; then
   have_clt() {
     # xcode-select returns a path when tools are present
     xcode-select -p &>/dev/null && return 0
@@ -417,7 +417,7 @@ SECONDS=0             # built-in Bash variable, counts seconds automatically
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ---------- ERROR LOGGING SETUP ----------
-LOG_DIR="$HOME/Desktop/TE_Logs"
+LOG_DIR="${TE_LOG_DIR:-$HOME/Desktop/TE_Logs}"
 mkdir -p "$LOG_DIR"
 ERROR_LOG="$LOG_DIR/te_errors_$(date +%Y%m%d_%H%M%S).log"
 MAIN_LOG="$LOG_DIR/te_main_$(date +%Y%m%d_%H%M%S).log"
@@ -447,8 +447,12 @@ dbg() { [[ "$TE_VERBOSE" == "1" ]] && echo "$@" >&2; }
 log_info "Starting TE Check for $# files"
 
 # Locate ffmpeg
-if [[ -x "$BASE_DIR/ffmpeg" ]]; then
+if [[ -n "${FFMPEG_BIN:-}" && -x "$FFMPEG_BIN" ]]; then
+    :
+elif [[ -x "$BASE_DIR/ffmpeg" ]]; then
     FFMPEG_BIN="$BASE_DIR/ffmpeg"
+elif [[ -x "$BASE_DIR/ffmpeg.exe" ]]; then
+    FFMPEG_BIN="$BASE_DIR/ffmpeg.exe"
 elif command -v ffmpeg &>/dev/null; then
     FFMPEG_BIN="ffmpeg"
 else
@@ -457,8 +461,12 @@ else
 fi
 
 # Locate ffprobe
-if [[ -x "$BASE_DIR/ffprobe" ]]; then
+if [[ -n "${FFPROBE_BIN:-}" && -x "$FFPROBE_BIN" ]]; then
+    :
+elif [[ -x "$BASE_DIR/ffprobe" ]]; then
     FFPROBE_BIN="$BASE_DIR/ffprobe"
+elif [[ -x "$BASE_DIR/ffprobe.exe" ]]; then
+    FFPROBE_BIN="$BASE_DIR/ffprobe.exe"
 elif command -v ffprobe &>/dev/null; then
     FFPROBE_BIN="ffprobe"
 else
@@ -467,7 +475,9 @@ else
 fi
 
 # Locate Python
-if [[ -x "$BASE_DIR/pyenv/bin/python3" ]]; then
+if [[ -n "${PYTHON_BIN:-}" && -x "$PYTHON_BIN" ]]; then
+    :
+elif [[ -x "$BASE_DIR/pyenv/bin/python3" ]]; then
     PYTHON_BIN="$BASE_DIR/pyenv/bin/python3"
 elif command -v python3 &>/dev/null; then
     PYTHON_BIN="python3"
@@ -477,8 +487,12 @@ else
 fi
 
 # Locate jq
-if [[ -x "$BASE_DIR/jq" ]]; then
+if [[ -n "${JQ_BIN:-}" && -x "$JQ_BIN" ]]; then
+    :
+elif [[ -x "$BASE_DIR/jq" ]]; then
     JQ_BIN="$BASE_DIR/jq"
+elif [[ -x "$BASE_DIR/jq.exe" ]]; then
+    JQ_BIN="$BASE_DIR/jq.exe"
 elif command -v jq &>/dev/null; then
     JQ_BIN=$(command -v jq)
 else
@@ -495,8 +509,12 @@ source "$METADATA_HELPERS"
 
 #Locate EXIF TOOL
 # Try bundled first, then system paths
-if [[ -x "$BASE_DIR/exiftool" ]]; then
+if [[ -n "${EXIFTOOL_BIN:-}" && -x "$EXIFTOOL_BIN" ]]; then
+  :
+elif [[ -x "$BASE_DIR/exiftool" ]]; then
   EXIFTOOL_BIN="$BASE_DIR/exiftool"
+elif [[ -x "$BASE_DIR/exiftool.exe" ]]; then
+  EXIFTOOL_BIN="$BASE_DIR/exiftool.exe"
 elif command -v exiftool &>/dev/null; then
   EXIFTOOL_BIN=$(command -v exiftool)
 elif [[ -x "/usr/local/bin/exiftool" ]]; then
@@ -504,8 +522,16 @@ elif [[ -x "/usr/local/bin/exiftool" ]]; then
 elif [[ -x "/opt/homebrew/bin/exiftool" ]]; then
   EXIFTOOL_BIN="/opt/homebrew/bin/exiftool"
 else
-  echo "ExifTool not found. Please install ExifTool via Homebrew or include it in the app bundle."
+  echo "ExifTool not found. Install ExifTool or include it in the app bundle."
   exit 1
+fi
+
+if [[ -x "$BASE_DIR/cussbuster" ]]; then
+  CUSS_BUSTER_BIN="$BASE_DIR/cussbuster"
+elif [[ -x "$BASE_DIR/cussbuster.exe" ]]; then
+  CUSS_BUSTER_BIN="$BASE_DIR/cussbuster.exe"
+else
+  CUSS_BUSTER_BIN=""
 fi
 
 
@@ -1004,7 +1030,7 @@ last=$("$FFMPEG_BIN" -v error -noaccurate_seek -sseof -0.05 -i "$FILE" \
 
 # ---- fallback safety defaults ------------------------------------------------
 first=${first:-100}; last=${last:-100}
-lte() { echo "$1 <= $2" | bc -l; }
+lte() { awk -v left="$1" -v right="$2" 'BEGIN{print (left <= right) ? 1 : 0}'; }
 
 first_dark=$(lte "$first" "$threshold")
 last_dark=$(lte "$last" "$threshold")
@@ -1234,7 +1260,7 @@ if audio_stream_missing; then
   return
 fi
 
-AUDIO_TEMP="/private/tmp/$(basename "${FILE%.*}")_decoded.wav"
+AUDIO_TEMP="$TE_TMP_DIR/$(basename "${FILE%.*}")_decoded.wav"
 
 # Decode to uncompressed 24-bit WAV
 "$FFMPEG_BIN" -y -i "$FILE" -vn -sn -dn -acodec pcm_s24le -ar 48000 "$AUDIO_TEMP" >/dev/null 2>&1
@@ -1246,7 +1272,7 @@ loudnorm_raw=$(
     -f null - 2>&1
 )
 
-debug_log="/tmp/$(basename "${FILE%.*}")_loudnorm_debug.log"
+debug_log="$TE_TMP_DIR/$(basename "${FILE%.*}")_loudnorm_debug.log"
 echo "$loudnorm_raw" > "$debug_log"
 
 # Extract only the JSON block from loudnorm log
@@ -1553,8 +1579,8 @@ fi
         dbg "[DEBUG] Calculated IRE: min=$LUMA_MIN_IRE, max=$LUMA_MAX_IRE"
         dbg "[DEBUG] ============================================="
 
-        pass_low=$(echo "$LUMA_MIN_IRE < -1" | bc)
-        pass_high=$(echo "$LUMA_MAX_IRE > 101" | bc)
+        pass_low=$(awk -v value="$LUMA_MIN_IRE" 'BEGIN{print (value < -1) ? 1 : 0}')
+        pass_high=$(awk -v value="$LUMA_MAX_IRE" 'BEGIN{print (value > 101) ? 1 : 0}')
 
         dbg "[DEBUG] Threshold check: pass_low=$pass_low, pass_high=$pass_high"
 
@@ -1628,7 +1654,7 @@ if audio_stream_missing; then
 fi
 
 # ---- temp workspace ------------------------------------------------
-TP_WD=$(mktemp -d /tmp/truepeak.XXXXXX)
+TP_WD=$(mktemp -d "$TE_TMP_DIR/truepeak.XXXXXX")
 trap 'rm -rf "$TP_WD"' RETURN
 
 stereo_wav="$TP_WD/stereo.wav"
@@ -1672,9 +1698,9 @@ judge_tp () {
   local tp=$1
   if [[ -z "$tp" || "$tp" == "-inf" ]]; then
        echo "⚠️  Unable to measure – check in Audition"
-  elif (( $(echo "$tp <= -2.5" | bc -l) )); then
+  elif awk -v value="$tp" 'BEGIN{exit !(value <= -2.5)}'; then
        echo "✅ PASS ($tp dBTP)"
-  elif (( $(echo "$tp <= -1.5" | bc -l) )); then
+  elif awk -v value="$tp" 'BEGIN{exit !(value <= -1.5)}'; then
        echo "🟡 Close (-2 dBTP ±0.5) – verify in Audition ($tp dBTP)"
   else
        echo "❌ FAIL ($tp dBTP)"
@@ -1931,8 +1957,8 @@ fi
         dbg "[DEBUG] Calculated IRE: min=$LUMA_MIN_IRE, max=$LUMA_MAX_IRE"
         dbg "[DEBUG] ============================================="
 
-        pass_low=$(echo "$LUMA_MIN_IRE < -1" | bc)
-        pass_high=$(echo "$LUMA_MAX_IRE > 101" | bc)
+        pass_low=$(awk -v value="$LUMA_MIN_IRE" 'BEGIN{print (value < -1) ? 1 : 0}')
+        pass_high=$(awk -v value="$LUMA_MAX_IRE" 'BEGIN{print (value > 101) ? 1 : 0}')
 
         dbg "[DEBUG] Threshold check: pass_low=$pass_low, pass_high=$pass_high"
 
@@ -2169,7 +2195,7 @@ check_has_708_cc() {
 
 
 check_caption_profanity() {
-  local srt_out="/tmp/$(basename "${FILE%.*}")_captions.srt"
+  local srt_out="$TE_TMP_DIR/$(basename "${FILE%.*}")_captions.srt"
 
   # Extract first subtitle stream to SRT quietly
   "$FFMPEG_BIN" -hide_banner -nostats -y -i "$FILE" -map 0:s:0 -c:s srt "$srt_out" >/dev/null 2>&1
@@ -2180,7 +2206,15 @@ check_caption_profanity() {
        # Run cussbuster and capture its output
     local profanity_result
    
-    profanity_result=$("$PYTHON_BIN" "$BASE_DIR/Cussbuster2000.py" "$srt_out")
+    if [[ -n "$CUSS_BUSTER_BIN" ]]; then
+      profanity_result=$("$CUSS_BUSTER_BIN" "$srt_out")
+    elif [[ -n "$PYTHON_BIN" ]]; then
+      profanity_result=$("$PYTHON_BIN" "$BASE_DIR/Cussbuster2000.py" "$srt_out")
+    else
+      CAPTION_PROFANITY_RESULT="⚠️ Unable to run caption profanity check"
+      rm -f "$srt_out"
+      return
+    fi
   
   
     # If the tool produced a report, preserve the header and all masked lines

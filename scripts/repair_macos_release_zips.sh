@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Usage:
-#   SOURCE_VERSION=Version-11.9 RELEASE_VERSION=11.10 scripts/repair_macos_release_zips.sh
+#   SOURCE_VERSION=Version-11.10 RELEASE_VERSION=11.11 scripts/repair_macos_release_zips.sh
 #
 # The script intentionally expects a new RELEASE_VERSION for package changes.
 # Set ALLOW_SAME_VERSION=1 only for local diagnostics.
@@ -10,7 +10,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
 WORK_DIR="$DIST_DIR/repaired-release-work"
-SOURCE_VERSION="${SOURCE_VERSION:-Version-11.9}"
+SOURCE_VERSION="${SOURCE_VERSION:-Version-11.10}"
 RELEASE_VERSION="${RELEASE_VERSION:-$SOURCE_VERSION}"
 
 ARM64_FFMPEG_URL="https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip"
@@ -23,7 +23,7 @@ ARM64_TOOLS_DIR="$WORK_DIR/dependencies/arm64"
 
 if [[ "${ALLOW_SAME_VERSION:-0}" != "1" && "$RELEASE_VERSION" == "$SOURCE_VERSION" ]]; then
   echo "RELEASE_VERSION must differ from SOURCE_VERSION for a published package change." >&2
-  echo "Example: SOURCE_VERSION=Version-11.9 RELEASE_VERSION=11.10 $0" >&2
+  echo "Example: SOURCE_VERSION=Version-11.10 RELEASE_VERSION=11.11 $0" >&2
   exit 1
 fi
 

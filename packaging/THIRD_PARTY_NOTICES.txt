@@ -1,0 +1,27 @@
+TE Tool includes or uses the following third-party software in its platform packages:
+
+FFmpeg and FFprobe
+https://ffmpeg.org/
+Distributed under the applicable GNU LGPL/GPL terms for the packaged build.
+
+Git for Windows Bash runtime (Windows package only)
+https://gitforwindows.org/
+Git and included Unix tools are distributed under their respective open-source licenses.
+Source release: https://github.com/git-for-windows/git/releases
+
+jq
+https://jqlang.github.io/jq/
+Distributed under the MIT License.
+
+ExifTool
+https://exiftool.org/
+Distributed under the same terms as Perl (Artistic License or GNU GPL).
+
+Python, Tcl/Tk, and PyInstaller bootloader (Windows package only)
+https://www.python.org/
+https://www.tcl.tk/
+https://pyinstaller.org/
+Distributed under their respective open-source licenses.
+
+The Linux Mint package installs FFmpeg, jq, ExifTool, Python, Tk, and Bash from
+the user's configured Linux Mint/Ubuntu package repositories.
