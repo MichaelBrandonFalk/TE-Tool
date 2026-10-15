@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TE Tool Downloads</title>
-  <meta name="description" content="Download TE Tool Version 11.10 for Apple Silicon Macs, or browse older releases.">
+  <meta name="description" content="Download TE Tool Version 11.11 for Apple Silicon Macs, Windows x64, and Linux Mint.">
   <link rel="icon" type="image/png" sizes="512x512" href="app-icon.png">
   <link rel="apple-touch-icon" href="app-icon.png">
   <meta name="theme-color" content="#0a7f72">
@@ -213,7 +213,7 @@
         <img class="app-icon" src="app-icon.png" alt="TE Tool app icon" width="116" height="116">
         <div>
           <h1>TE Tool</h1>
-          <p class="lead">Version 11.10 for Apple Silicon Macs.</p>
+          <p class="lead">Version 11.11 for Apple Silicon Macs, Windows x64, and Linux Mint.</p>
         </div>
       </div>
     </section>
@@ -222,7 +222,19 @@
       <article class="download-card">
         <h2>macOS Apple Silicon</h2>
         <p class="meta">For Macs with Apple M-series processors. Includes native Apple Silicon media tools, the app, installation instructions, and user manual.</p>
-        <a class="button" href="https://github.com/MichaelBrandonFalk/TE-Tool/releases/download/v11.10/TE-Tool-Version-11.10-macOS-Apple-Silicon.zip">Download Apple Silicon</a>
+        <a class="button" href="https://github.com/MichaelBrandonFalk/TE-Tool/releases/download/v11.11/TE-Tool-Version-11.11-macOS-Apple-Silicon.zip">Download Apple Silicon</a>
+      </article>
+
+      <article class="download-card">
+        <h2>Windows x64</h2>
+        <p class="meta">For 64-bit Windows 10 and 11. Includes a setup program and the media-analysis tools required by TE Tool.</p>
+        <a class="button" href="https://github.com/MichaelBrandonFalk/TE-Tool/releases/download/v11.11/TE-Tool-Version-11.11-Windows-x64-Setup.exe">Download Windows</a>
+      </article>
+
+      <article class="download-card">
+        <h2>Linux Mint</h2>
+        <p class="meta">For 64-bit Linux Mint 21 or newer. Installs through Software Manager and uses supported Ubuntu/Mint media packages.</p>
+        <a class="button" href="https://github.com/MichaelBrandonFalk/TE-Tool/releases/download/v11.11/TE-Tool-Version-11.11-Linux-Mint-amd64.deb">Download Linux Mint</a>
       </article>
 
       <article class="download-card">
@@ -249,8 +261,10 @@
       <div class="panel">
         <h2>Notes</h2>
         <ul>
-          <li>Current release: Version 11.10.</li>
-          <li>Current releases support Apple Silicon Macs only. Intel packages through Version 11.9 remain in the release archive.</li>
+          <li>Current release: Version 11.11.</li>
+          <li>Current packages support Apple Silicon Macs, 64-bit Windows 10/11, and 64-bit Linux Mint 21 or newer.</li>
+          <li>Intel Mac packages through Version 11.9 remain in the release archive.</li>
+          <li>The Windows installer includes the required analysis tools. Linux Mint installs FFmpeg, jq, ExifTool, Python, Tk, and Bash from its configured package repositories.</li>
           <li>Structured FFprobe parsing prevents duplicate metadata values from newer stream groups.</li>
           <li>Release packages should not be replaced in place; each package update gets a new GitHub release tag.</li>
           <li>macOS may ask for Apple Command Line Tools; the app checks for them on launch.</li>

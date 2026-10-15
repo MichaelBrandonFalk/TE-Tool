@@ -1,0 +1,44 @@
+name: Publish cross-platform release assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the v prefix
+        required: true
+        default: "11.11"
+      build_run_id:
+        description: Successful cross-platform build run ID
+        required: true
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download validated build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.build_run_id }}
+          pattern: te-tool-*-${{ inputs.version }}
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify expected packages
+        run: |
+          test -f "release-assets/TE-Tool-Version-${{ inputs.version }}-Windows-x64-Setup.exe"
+          test -f "release-assets/TE-Tool-Version-${{ inputs.version }}-Linux-Mint-amd64.deb"
+          sha256sum release-assets/*
+
+      - name: Attach packages to immutable release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "v${{ inputs.version }}" \
+            "release-assets/TE-Tool-Version-${{ inputs.version }}-Windows-x64-Setup.exe" \
+            "release-assets/TE-Tool-Version-${{ inputs.version }}-Linux-Mint-amd64.deb" \
+            --repo "${{ github.repository }}"
