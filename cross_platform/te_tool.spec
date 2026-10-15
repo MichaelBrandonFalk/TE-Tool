@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 
-repo = Path(SPECPATH).parent.parent
+repo = Path(SPECPATH).parent
 platform_resources = Path(os.environ["TE_PLATFORM_RESOURCES"])
 
 
