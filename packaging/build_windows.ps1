@@ -62,12 +62,72 @@ if ($null -ne $exiftoolFiles) {
 
 Copy-Item (Join-Path $env:PORTABLE_GIT_ROOT "usr") (Join-Path $PlatformResources "runtime\usr") -Recurse
 
+function Convert-ToMsysPath([string]$PathValue) {
+    $full = [System.IO.Path]::GetFullPath($PathValue).Replace("\", "/")
+    if ($full -match "^([A-Za-z]):/(.*)$") {
+        return "/$($Matches[1].ToLowerInvariant())/$($Matches[2])"
+    }
+    return $full
+}
+
+# Exercise the Windows Bash and media binaries against a real media file.
+$SmokeDir = Join-Path $Work "smoke-test"
+New-Item $SmokeDir -ItemType Directory -Force | Out-Null
+New-Item (Join-Path $SmokeDir "logs") -ItemType Directory -Force | Out-Null
+New-Item (Join-Path $SmokeDir "tmp") -ItemType Directory -Force | Out-Null
+$SmokeMedia = Join-Path $SmokeDir "windows-smoke.mov"
+$BundledFfmpeg = Join-Path $PlatformResources "ffmpeg.exe"
+& $BundledFfmpeg -v error `
+    -f lavfi -i "color=size=720x480:rate=30000/1001:color=black" `
+    -f lavfi -i "anullsrc=channel_layout=stereo:sample_rate=48000" `
+    -t 0.25 -shortest -c:v prores_ks -profile:v 3 -pix_fmt yuv422p10le `
+    -c:a pcm_s24le -ar 48000 -ac 2 $SmokeMedia
+if ($LASTEXITCODE -ne 0) {
+    throw "Bundled FFmpeg could not create the Windows smoke-test media."
+}
+
+$env:TE_NONINTERACTIVE = "1"
+$env:TE_TEST_TYPE = "SVOD"
+$env:TE_PHASE1_ON = "1"
+$env:TE_IFRAME_ON = "0"
+$env:TE_CAPTIONPROFANITY_ON = "0"
+$env:TE_PHASE2_ON = "0"
+$env:TE_LUMAIRE_ON = "0"
+$env:TE_TRUEPEAKS_ON = "0"
+$env:TE_ADVANCEDCONTINUITY_ON = "0"
+$env:TE_ADVANCEDLUMAIRE_ON = "0"
+$env:TE_ADVANCEDCHROMA_ON = "0"
+$env:TE_LOG_DIR = Convert-ToMsysPath (Join-Path $SmokeDir "logs")
+$env:TE_TMP_DIR = Convert-ToMsysPath (Join-Path $SmokeDir "tmp")
+$env:FFMPEG_BIN = Convert-ToMsysPath (Join-Path $PlatformResources "ffmpeg.exe")
+$env:FFPROBE_BIN = Convert-ToMsysPath (Join-Path $PlatformResources "ffprobe.exe")
+$env:JQ_BIN = Convert-ToMsysPath (Join-Path $PlatformResources "jq.exe")
+$env:EXIFTOOL_BIN = Convert-ToMsysPath (Join-Path $PlatformResources "exiftool.exe")
+$BundledBash = Join-Path $PlatformResources "runtime\usr\bin\bash.exe"
+$SmokeLines = & $BundledBash `
+    (Convert-ToMsysPath (Join-Path $Root "Resources\script")) `
+    (Convert-ToMsysPath $SmokeMedia) 2>&1
+$SmokeExitCode = $LASTEXITCODE
+$SmokeOutput = $SmokeLines -join [Environment]::NewLine
+Write-Host $SmokeOutput
+if ($SmokeExitCode -ne 0) {
+    throw "Windows media smoke test failed with exit code $SmokeExitCode."
+}
+foreach ($marker in @("VIDEO CODEC:", "FRAME RATE:", "AUDIO CODEC:", "Total TE processing time:")) {
+    if (-not $SmokeOutput.Contains($marker)) {
+        throw "Windows media smoke test did not report '$marker'."
+    }
+}
+
 $env:TE_PLATFORM_RESOURCES = $PlatformResources
 $env:TE_WINDOWS_ICON = $IconIco
 pyinstaller --noconfirm --clean `
     --distpath $PyInstallerDist `
     --workpath (Join-Path $Work "pyinstaller-work") `
     (Join-Path $Root "cross_platform\te_tool.spec")
+if ($LASTEXITCODE -ne 0) {
+    throw "PyInstaller could not build the Windows desktop app."
+}
 
 $AppDir = Join-Path $PyInstallerDist "te-tool"
 Copy-Item (Join-Path $Root "TE TOOLS User Manual.pdf") $AppDir
