@@ -60,6 +60,9 @@ def msys_path(path: Path | str) -> str:
 
 def bash_executable(resources: Path) -> Path:
     if sys.platform == "win32":
+        standard = resources / "runtime" / "bin" / "bash.exe"
+        if standard.is_file():
+            return standard
         return resources / "runtime" / "usr" / "bin" / "bash.exe"
     return Path("/bin/bash")
 

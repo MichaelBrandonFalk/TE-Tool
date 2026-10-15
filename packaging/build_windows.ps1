@@ -60,7 +60,9 @@ if ($null -ne $exiftoolFiles) {
     Copy-Item $exiftoolFiles.FullName (Join-Path $PlatformResources "exiftool_files") -Recurse
 }
 
-Copy-Item (Join-Path $env:PORTABLE_GIT_ROOT "usr") (Join-Path $PlatformResources "runtime\usr") -Recurse
+# Bash needs the complete portable root for Windows drive mounts and /tmp.
+Get-ChildItem $env:PORTABLE_GIT_ROOT -Force | Copy-Item `
+    -Destination (Join-Path $PlatformResources "runtime") -Recurse -Force
 
 function Convert-ToMsysPath([string]$PathValue) {
     $full = [System.IO.Path]::GetFullPath($PathValue).Replace("\", "/")
@@ -103,7 +105,7 @@ $env:FFMPEG_BIN = Convert-ToMsysPath (Join-Path $PlatformResources "ffmpeg.exe")
 $env:FFPROBE_BIN = Convert-ToMsysPath (Join-Path $PlatformResources "ffprobe.exe")
 $env:JQ_BIN = Convert-ToMsysPath (Join-Path $PlatformResources "jq.exe")
 $env:EXIFTOOL_BIN = Convert-ToMsysPath (Join-Path $PlatformResources "exiftool.exe")
-$BundledBash = Join-Path $PlatformResources "runtime\usr\bin\bash.exe"
+$BundledBash = Join-Path $PlatformResources "runtime\bin\bash.exe"
 $SmokeLines = & $BundledBash `
     (Convert-ToMsysPath (Join-Path $Root "Resources\script")) `
     (Convert-ToMsysPath $SmokeMedia) 2>&1
