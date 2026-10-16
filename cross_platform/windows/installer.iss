@@ -1,6 +1,6 @@
 #define MyAppName "TE Tool"
 #ifndef MyAppVersion
-#define MyAppVersion "11.11"
+#define MyAppVersion "11.12"
 #endif
 #define MyAppPublisher "Great American Media"
 #define MyAppExeName "te-tool.exe"

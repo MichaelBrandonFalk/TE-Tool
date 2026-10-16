@@ -1,4 +1,4 @@
-TE Tool Version 11.11 for Windows
+TE Tool Version 11.12 for Windows
 
 Run the setup program, then open TE Tool from the Start menu.
 Select video files or a folder, choose the test type and checks, and click Run Checks.

@@ -20,7 +20,7 @@ from tkinter import filedialog, messagebox, ttk
 
 
 APP_NAME = "TE Tool"
-APP_VERSION = "11.11"
+APP_VERSION = "11.12"
 VIDEO_EXTENSIONS = {".mov", ".mp4", ".mxf", ".m4v"}
 
 CHECKS = (

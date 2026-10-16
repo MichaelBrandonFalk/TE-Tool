@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${VERSION:-11.11}"
+VERSION="${VERSION:-11.12}"
 ARCH="${ARCH:-amd64}"
 DIST_DIR="$ROOT_DIR/dist"
 WORK_DIR="$DIST_DIR/linux-mint-deb-work"

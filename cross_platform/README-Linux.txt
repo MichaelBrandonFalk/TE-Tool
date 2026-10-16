@@ -1,4 +1,4 @@
-TE Tool Version 11.11 for Linux Mint, Ubuntu, and Debian
+TE Tool Version 11.12 for Linux Mint, Ubuntu, and Debian
 
 Double-click the .deb package and install it with Software Manager, then open TE Tool
 from the application menu. Select video files or a folder, choose the test type and
